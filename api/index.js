@@ -214,7 +214,8 @@ app.patch('/api/repairs/:id', async (req, res) => {
   if (!current) return res.status(404).json({ error: 'Ficha no encontrada' });
   const manager = canManage(req), author = String(current.author_id) === String(req.user.id), assignee = String(current.assignee_id || '') === String(req.user.id);
   if (!manager && !author && !assignee) return res.status(403).json({ error: 'No tienes permiso para editar esta ficha' });
-  const canEditDetails = manager || (author && current.status === 'Recibida');
+  if (req.body?.status !== undefined && req.body.status !== current.status && !manager && !assignee) return res.status(403).json({ error: 'Solo los gestores o la persona asignada pueden cambiar el progreso' });
+  const canEditDetails = manager || author;
   if (!canEditDetails && ['title', 'description', 'campus_id', 'place_id', 'urgency'].some(key => key in (req.body || {}))) return res.status(403).json({ error: 'Solo puedes editar los detalles antes de asignar la ficha' });
   const campusId = req.body?.campus_id || current.campus_id, placeId = Number(req.body?.place_id || current.place_id);
   const place = await pool.query('SELECT name FROM arreglos.places WHERE id = $1 AND campus_id = $2 AND school_id = $3 AND active = TRUE', [placeId, campusId, req.schoolId]);
@@ -242,7 +243,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
 app.delete('/api/repairs/:id', async (req, res) => {
   const current = await loadRepair(req.params.id, req);
   if (!current) return res.status(404).json({ error: 'Ficha no encontrada' });
-  if (!canManage(req) && (String(current.author_id) !== String(req.user.id) || current.status !== 'Recibida')) return res.status(403).json({ error: 'Solo puedes eliminar tus fichas recibidas' });
+  if (!canManage(req) && String(current.author_id) !== String(req.user.id)) return res.status(403).json({ error: 'Solo puedes eliminar fichas que hayas creado tú' });
   await pool.query('DELETE FROM arreglos.repairs WHERE id=$1 AND school_id=$2', [req.params.id, req.schoolId]);
   res.status(204).end();
 });
