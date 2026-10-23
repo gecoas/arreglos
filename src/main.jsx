@@ -41,6 +41,7 @@ function App() {
   const [showNew, setShowNew] = useState(false);
   const [editingRepair, setEditingRepair] = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
+  const [accountOpen, setAccountOpen] = useState(false);
   const [role, setRole] = useState('Gestor');
   const [toast, setToast] = useState('');
   const [assignees, setAssignees] = useState([]);
@@ -60,7 +61,7 @@ function App() {
         setSelectedId(loaded[0]?.id || null);
         setCampuses((await apiRequest('/repair-places')).campuses || []);
         setRole({ gestor: 'Gestor', direccion: 'Dirección', mantenimiento: 'Mantenimiento', profesor: 'Profesor' }[session.user.repair_profile] || 'Profesor');
-        if (['admin', 'gestor', 'direccion'].includes(session.user.role === 'admin' ? 'admin' : session.user.repair_profile)) setAssignees((await apiRequest('/repair-users')).users || []);
+        setAssignees((await apiRequest('/repair-users')).users || []);
       } catch (error) { if (error.status !== 401) setAuthError(error.message); }
       finally { setAuthLoading(false); }
     })();
@@ -74,6 +75,7 @@ function App() {
   const updateProfile = async (id, profile) => { await apiRequest(`/repair-users/${id}`, { method: 'PUT', body: JSON.stringify({ profile }) }); setAssignees(items => items.map(item => item.id === id ? { ...item, profile } : item)); notify('Perfil actualizado'); };
   const addPlace = async (campusId, name) => { const result = await apiRequest('/repair-places', { method: 'POST', body: JSON.stringify({ campus_id: campusId, name }) }); setCampuses(items => items.map(campus => campus.id === campusId ? { ...campus, places: [...campus.places, { id: result.place.id, name: result.place.name }] } : campus)); notify('Lugar añadido'); };
   const renamePlace = async (placeId, name) => { const result = await apiRequest(`/repair-places/${placeId}`, { method: 'PATCH', body: JSON.stringify({ name }) }); setCampuses(items => items.map(campus => ({ ...campus, places: campus.places.map(place => place.id === placeId ? { ...place, name: result.place.name } : place) }))); notify('Lugar actualizado'); };
+  const logout = async () => { try { await apiRequest('/auth/logout', { method: 'POST' }); } finally { setUser(null); setAccountOpen(false); } };
 
   if (authLoading) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark"><Hammer size={19} /></div><h1>arreglos</h1><p>Comprobando tu sesión...</p></div></div>;
   if (!user) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark"><Hammer size={19} /></div><span className="eyebrow">COLEGIO SAN MARCOS</span><h1>arreglos</h1><p>Gestiona y sigue los arreglos del centro desde un solo lugar.</p><button className="google-button" onClick={() => window.location.assign(`/api/auth/google?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`)}><span>G</span> Continuar con Google</button>{authError && <div className="auth-error">{authError}</div>}<small>Accede con tu cuenta autorizada del colegio.</small></div></div>;
@@ -82,11 +84,11 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Hammer size={19} /></div><div><strong>arreglos</strong><small>COLEGIO SAN MARCOS</small></div></div>
       <div className="school-switch"><Building2 size={16} /><span>Centro escolar</span><ChevronDown size={14} /></div>
-      <nav><p className="nav-label">GESTIÓN</p><a className={activeView === 'dashboard' ? 'active' : ''} onClick={() => setActiveView('dashboard')}><LayoutDashboard size={18} />Panel general</a><a className={activeView === 'mine' ? 'active' : ''} onClick={() => setActiveView('mine')}><FilePlus2 size={18} />Mis fichas <span className="nav-count">{repairs.filter(item => item.author_id === user.id).length}</span></a><a className={activeView === 'team' ? 'active' : ''} onClick={() => setActiveView('team')}><Users size={18} />Equipo</a><p className="nav-label second">CENTRO</p><a className={activeView === 'spaces' ? 'active' : ''} onClick={() => setActiveView('spaces')}><Building2 size={18} />Espacios</a><a className={activeView === 'settings' ? 'active' : ''} onClick={() => setActiveView('settings')}><Settings size={18} />Configuración</a></nav>
+       <nav><p className="nav-label">GESTIÓN</p><a className={activeView === 'dashboard' ? 'active' : ''} onClick={() => setActiveView('dashboard')}><LayoutDashboard size={18} />Panel general</a><a className={activeView === 'mine' ? 'active' : ''} onClick={() => setActiveView('mine')}><FilePlus2 size={18} />Mis fichas <span className="nav-count">{repairs.filter(item => item.author_id === user.id).length}</span></a><a className={activeView === 'team' ? 'active' : ''} onClick={() => setActiveView('team')}><Users size={18} />Usuarios</a><p className="nav-label second">CENTRO</p><a className={activeView === 'spaces' ? 'active' : ''} onClick={() => setActiveView('spaces')}><Building2 size={18} />Sedes y aulas</a><a className={activeView === 'settings' ? 'active' : ''} onClick={() => setActiveView('settings')}><Settings size={18} />Configuración</a></nav>
       <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><MessageCircle size={17} /></div><strong>¿Necesitas ayuda?</strong><span>Consulta cómo funciona arreglos.</span><button>Ver guía <ChevronRight size={14} /></button></div><div className="user-mini"><div className="avatar avatar-green">{user.initials || user.name?.slice(0, 2).toUpperCase()}</div><div><strong>{user.name}</strong><span>{role}</span></div><MoreHorizontal size={18} /></div></div>
     </aside>
     <main className="main-content">
-      <header className="topbar"><div className="mobile-brand"><IconButton label="Abrir menú"><Menu size={21} /></IconButton><span>arreglos</span></div><div className="breadcrumb"><span>Panel general</span><ChevronRight size={14} /><strong>Fichas de arreglos</strong></div><div className="top-actions"><div className="role-select"><UserRound size={15} /><span>{role}</span></div><IconButton label="Notificaciones" className="notification"><Bell size={19} /><i /></IconButton><div className="avatar avatar-green top-avatar">{user.initials || user.name?.slice(0, 2).toUpperCase()}</div></div></header>
+       <header className="topbar"><div className="mobile-brand"><IconButton label="Abrir menú"><Menu size={21} /></IconButton><span>arreglos</span></div><div className="breadcrumb"><span>Panel general</span><ChevronRight size={14} /><strong>Fichas de arreglos</strong></div><div className="top-actions"><div className="role-select"><UserRound size={15} /><span>{role}</span></div><IconButton label="Notificaciones" className="notification"><Bell size={19} /><i /></IconButton><button type="button" className="avatar avatar-green top-avatar account-trigger" onClick={() => setAccountOpen(open => !open)} aria-label="Abrir menú de cuenta">{user.initials || user.name?.slice(0, 2).toUpperCase()}</button></div></header>{accountOpen && <AccountMenu user={user} role={role} onLogout={logout} />}
        <div className={`page-wrap ${activeView}`}>
         <div className="page-heading"><div><div className="eyebrow">MIÉRCOLES, 23 DE OCTUBRE DE 2024</div><h1>Fichas de arreglos</h1><p>Organiza, asigna y haz seguimiento de los arreglos del centro.</p></div><button className="primary-button" onClick={() => setShowNew(true)}><Plus size={18} />Nueva ficha</button></div>
          <section className="stats-grid"><div className="stat-card"><div className="stat-icon all"><FilePlus2 size={19} /></div><div><span>Total de fichas</span><strong>{repairs.length}</strong><small>+2 esta semana</small></div></div><div className="stat-card"><div className="stat-icon orange"><Clock3 size={19} /></div><div><span>Por atender</span><strong>{count('Recibida') + count('Asignada')}</strong><small>Requieren atención</small></div></div><div className="stat-card"><div className="stat-icon blue"><Hammer size={19} /></div><div><span>En progreso</span><strong>{count('En progreso')}</strong><small>En manos del equipo</small></div></div><div className="stat-card"><div className="stat-icon green"><Check size={19} /></div><div><span>Realizadas</span><strong>{count('Realizada')}</strong><small>Este mes</small></div></div></section>
@@ -103,6 +105,10 @@ function App() {
   </div>;
 }
 
+function AccountMenu({ user, role, onLogout }) {
+  return <div className="account-menu"><div className="account-summary"><div className="avatar avatar-green">{user.initials || user.name?.slice(0, 2).toUpperCase()}</div><div><strong>{user.name}</strong><span>{user.email}</span></div></div><div className="account-role"><UserRound size={14} />{role}</div><button type="button" onClick={onLogout}><ChevronRight size={15} />Cerrar sesión</button></div>;
+}
+
 function RepairFormModal({ repair, campuses, user, role, onClose, onSubmit }) {
   const initialCampus = campuses.find(campus => campus.id === repair?.campus_id) || campuses[0];
   const [campusId, setCampusId] = useState(initialCampus?.id || '');
@@ -114,7 +120,7 @@ function RepairFormModal({ repair, campuses, user, role, onClose, onSubmit }) {
 }
 
 function TeamView({ assignees, onProfile, canManage }) {
-  return <section className="management-card"><div className="management-head"><div><span className="eyebrow">EQUIPO DEL CENTRO</span><h2>Personas y perfiles</h2><p>Define quién puede gestionar fichas y quién recibe asignaciones.</p></div><Users size={22} /></div>{canManage ? <div className="team-list">{assignees.map(person => <div className="team-row" key={person.id}><div className="avatar avatar-purple">{person.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="team-person"><strong>{person.name}</strong><span>{person.email}</span></div><select value={person.profile || 'mantenimiento'} onChange={event => onProfile(person.id, event.target.value)}><option value="profesor">Profesor / empleado</option><option value="mantenimiento">Mantenimiento</option><option value="gestor">Gestor de arreglos</option><option value="direccion">Dirección</option></select></div>)}</div> : <div className="empty-detail">Solo los gestores pueden modificar perfiles de arreglos.</div>}</section>;
+  return <section className="management-card"><div className="management-head"><div><span className="eyebrow">USUARIOS DEL CENTRO</span><h2>Usuarios y perfiles</h2><p>{canManage ? 'Asigna el perfil operativo de cada persona.' : 'Consulta los perfiles asignados. Solo los gestores pueden modificarlos.'}</p></div><Users size={22} /></div><div className="team-list">{assignees.map(person => <div className="team-row" key={person.id}><div className="avatar avatar-purple">{person.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="team-person"><strong>{person.name}</strong><span>{person.email}</span></div><select disabled={!canManage} value={person.profile || 'profesor'} onChange={event => onProfile(person.id, event.target.value)}><option value="profesor">Profesor / empleado</option><option value="mantenimiento">Mantenimiento</option><option value="gestor">Gestor de arreglos</option><option value="direccion">Dirección</option></select></div>)}</div>{!assignees.length && <div className="empty-detail">No hay empleados activos en el colegio.</div>}</section>;
 }
 
 function SpacesView({ repairs, campuses, canManage, onAdd, onRename }) {
