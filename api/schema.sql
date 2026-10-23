@@ -38,10 +38,12 @@ CREATE TABLE IF NOT EXISTS arreglos.repairs (
   status VARCHAR(32) NOT NULL DEFAULT 'Recibida' CHECK (status IN ('Recibida', 'Asignada', 'En progreso', 'Realizada')),
   author_id VARCHAR(128) NOT NULL,
   assignee_id VARCHAR(128),
+  assigned_by_id VARCHAR(128),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TIMESTAMPTZ
 );
+ALTER TABLE arreglos.repairs ADD COLUMN IF NOT EXISTS assigned_by_id VARCHAR(128);
 CREATE INDEX IF NOT EXISTS repairs_school_status_idx ON arreglos.repairs (school_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS repairs_author_idx ON arreglos.repairs (author_id, created_at DESC);
 

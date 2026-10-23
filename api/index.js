@@ -277,7 +277,7 @@ app.post('/api/repairs', async (req, res) => {
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [req.schoolId, title, description, campusId, placeId, urgency, req.user.id]);
   const repair = await loadRepair(result.rows[0].id, req);
-  await dispatchNotification(req, { profiles: ['gestor', 'direccion'], subject: 'Nueva ficha de arreglo', body: `${repair.title} · ${repair.campus_name} · ${repair.place_name}`, repairId: repair.id });
+  await dispatchNotification(req, { profiles: ['gestor'], subject: 'Nueva ficha de arreglo', body: `${repair.title} · ${repair.campus_name} · ${repair.place_name}`, repairId: repair.id });
   res.status(201).json({ repair });
 });
 
@@ -293,8 +293,10 @@ app.patch('/api/repairs/:id', async (req, res) => {
   const place = await pool.query('SELECT name FROM arreglos.places WHERE id = $1 AND campus_id = $2 AND school_id = $3 AND active = TRUE', [placeId, campusId, req.schoolId]);
   if (!place.rows.length) return res.status(400).json({ error: 'Sede o aula no válida' });
   let assigneeId = current.assignee_id;
+  let assignedById = current.assigned_by_id;
   if (manager && 'assignee_id' in (req.body || {})) {
     assigneeId = req.body.assignee_id || null;
+    assignedById = assigneeId ? req.user.id : null;
     if (assigneeId) {
       if (!(await directory(req)).some(user => String(user.id) === String(assigneeId))) return res.status(400).json({ error: 'Solo se pueden asignar empleados activos del colegio' });
       const profile = await pool.query("SELECT profile FROM arreglos.user_profiles WHERE school_id = $1 AND user_id = $2 AND active = TRUE", [req.schoolId, assigneeId]);
@@ -305,16 +307,16 @@ app.patch('/api/repairs/:id', async (req, res) => {
   const status = allowed.includes(req.body?.status) ? req.body.status : current.status;
   const finalStatus = assigneeId && status === 'Recibida' ? 'Asignada' : status;
   await pool.query(
-    `UPDATE arreglos.repairs SET title=$1, description=$2, campus_id=$3, place_id=$4, urgency=$5, status=$6, assignee_id=$7, updated_at=CURRENT_TIMESTAMP,
-      completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$8 AND school_id=$9`,
+    `UPDATE arreglos.repairs SET title=$1, description=$2, campus_id=$3, place_id=$4, urgency=$5, status=$6, assignee_id=$7, assigned_by_id=$8, updated_at=CURRENT_TIMESTAMP,
+      completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$9 AND school_id=$10`,
     [canEditDetails ? text(req.body?.title ?? current.title,255) : current.title, canEditDetails ? text(req.body?.description ?? current.description,5000) : current.description, campusId, placeId,
-      canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, req.params.id, req.schoolId]);
+      canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, assignedById, req.params.id, req.schoolId]);
   const updated = await loadRepair(req.params.id, req);
   if (assigneeId && String(assigneeId) !== String(current.assignee_id)) {
-    await dispatchNotification(req, { userIds: [assigneeId], profiles: ['gestor', 'direccion'], subject: 'Te han asignado un arreglo', body: `${updated.title} · ${updated.campus_name} · ${updated.place_name}`, repairId: updated.id });
+    await dispatchNotification(req, { userIds: [assigneeId], subject: 'Te han asignado un arreglo', body: `${updated.title} · ${updated.campus_name} · ${updated.place_name}`, repairId: updated.id });
   }
   if (finalStatus === 'Realizada' && current.status !== 'Realizada') {
-    await dispatchNotification(req, { userIds: [current.author_id], profiles: ['gestor', 'direccion'], subject: 'Ficha de arreglo realizada', body: `${updated.title} se ha marcado como realizada.`, repairId: updated.id });
+    await dispatchNotification(req, { userIds: [current.assignee_id, current.assigned_by_id].filter(Boolean), profiles: current.assigned_by_id ? [] : ['gestor'], subject: 'Ficha de arreglo realizada', body: `${updated.title} se ha marcado como realizada.`, repairId: updated.id });
   }
   res.json({ repair: updated });
 });
@@ -340,7 +342,11 @@ app.post('/api/repairs/:id/comments', async (req, res) => {
   const body = text(req.body?.body, 2000);
   if (!body) return res.status(400).json({ error: 'El comentario no puede estar vacío' });
   const result = await pool.query('INSERT INTO arreglos.comments (repair_id, author_id, body) VALUES ($1,$2,$3) RETURNING id,body,created_at,author_id', [req.params.id, req.user.id, body]);
-  await dispatchNotification(req, { userIds: [repair.author_id, repair.assignee_id].filter(Boolean), profiles: ['gestor', 'direccion'], subject: 'Nuevo comentario en una ficha', body: `${repair.title}: ${body}`, repairId: repair.id });
+  const commenterId = String(req.user.id);
+  const assignedId = repair.assignee_id ? String(repair.assignee_id) : '';
+  const assignerId = repair.assigned_by_id ? String(repair.assigned_by_id) : '';
+  const commentRecipients = commenterId === assignedId ? [repair.assigned_by_id] : commenterId === assignerId ? [repair.assignee_id] : [repair.assignee_id, repair.assigned_by_id];
+  await dispatchNotification(req, { userIds: commentRecipients.filter(Boolean), profiles: !repair.assigned_by_id ? ['gestor'] : [], subject: 'Nuevo comentario en una ficha', body: `${repair.title}: ${body}`, repairId: repair.id });
   res.status(201).json({ comment: { ...result.rows[0], author_name: req.user.name, author_initials: req.user.initials } });
 });
 
