@@ -59,5 +59,8 @@ jobs:
             fi
             git fetch -q origin '$GITHUB_SHA'
             git checkout -q --detach --force '$GITHUB_SHA'
+            INTRANET_DATABASE_URL=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' intranet-api | awk -F= '\$1=="DATABASE_URL" {sub(/^[^=]*=/, ""); print; exit}')
+            test -n "\$INTRANET_DATABASE_URL"
+            export INTRANET_DATABASE_URL
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
           "

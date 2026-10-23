@@ -54,13 +54,15 @@ function App() {
     (async () => {
       try {
         const session = await apiRequest('/auth/session');
-        setUser(session.user);
+        const profile = await apiRequest('/profile');
+        const authenticatedUser = { ...session.user, repair_profile: profile.profile };
+        setUser(authenticatedUser);
         const data = await apiRequest('/repairs');
         const loaded = data.repairs.map(normalizeRepair);
         setRepairs(loaded);
         setSelectedId(loaded[0]?.id || null);
         try { setCampuses((await apiRequest('/repair-places')).campuses || []); } catch (error) { setAuthError(error.message); }
-        setRole({ gestor: 'Gestor', direccion: 'Dirección', mantenimiento: 'Mantenimiento', profesor: 'Profesor' }[session.user.repair_profile] || 'Profesor');
+        setRole({ gestor: 'Gestor', direccion: 'Dirección', mantenimiento: 'Mantenimiento', profesor: 'Profesor' }[profile.profile] || 'Profesor');
         try { setAssignees((await apiRequest('/repair-users')).users || []); } catch (error) { setAuthError(error.message); }
       } catch (error) { if (error.status !== 401) setAuthError(error.message); }
       finally { setAuthLoading(false); }

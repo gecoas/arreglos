@@ -1,4 +1,18 @@
 services:
+  arreglos-api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: arreglos-api:prod
+    container_name: arreglos-api
+    restart: unless-stopped
+    environment:
+      INTRANET_DATABASE_URL: ${INTRANET_DATABASE_URL:?INTRANET_DATABASE_URL must be set}
+      INTRANET_API_URL: http://intranet:80
+      PORT: 3001
+    networks:
+      - intranet_network
+
   arreglos:
     build:
       context: .
@@ -8,5 +22,12 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - intranet_network
     ports:
       - "5173:80"
+
+networks:
+  intranet_network:
+    external: true
+    name: intranet_default
