@@ -318,7 +318,8 @@ app.get('/api/repairs/:id/comments', async (req, res) => {
 });
 
 app.post('/api/repairs/:id/comments', async (req, res) => {
-  if (!await loadRepair(req.params.id, req)) return res.status(404).json({ error: 'Ficha no encontrada' });
+  const repair = await loadRepair(req.params.id, req);
+  if (!repair) return res.status(404).json({ error: 'Ficha no encontrada' });
   const body = text(req.body?.body, 2000);
   if (!body) return res.status(400).json({ error: 'El comentario no puede estar vacío' });
   const result = await pool.query('INSERT INTO arreglos.comments (repair_id, author_id, body) VALUES ($1,$2,$3) RETURNING id,body,created_at,author_id', [req.params.id, req.user.id, body]);
