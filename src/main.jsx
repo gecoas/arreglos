@@ -39,6 +39,7 @@ function App() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todas');
   const [showNew, setShowNew] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [editingRepair, setEditingRepair] = useState(null);
   const [activeView, setActiveView] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('arreglos.sidebar.collapsed') === 'true');
@@ -174,7 +175,7 @@ function App() {
       <div className="brand"><div className={`brand-mark ${branding.logo_data_url ? 'has-school-logo' : ''}`}>{branding.logo_data_url ? <img src={branding.logo_data_url} alt={`Logo de ${branding.school_name}`} /> : <Hammer size={19} />}</div><div><strong>arreglos</strong><small>{branding.school_name || 'COLEGIO'}</small></div></div>
       <div className="school-switch"><Building2 size={16} /><span>{branding.school_name || 'Centro escolar'}</span><ChevronDown size={14} /></div>
        <nav><p className="nav-label">GESTIÓN</p><a title="Panel general" aria-label="Panel general" className={activeView === 'dashboard' ? 'active' : ''} onClick={() => { setActiveView('dashboard'); setMobileSidebarOpen(false); }}><LayoutDashboard size={18} />Panel general</a><a title="Mis fichas" aria-label="Mis fichas" className={activeView === 'mine' ? 'active' : ''} onClick={() => { setActiveView('mine'); setMobileSidebarOpen(false); }}><FilePlus2 size={18} />Mis fichas <span className="nav-count">{repairs.filter(item => item.author_id === user.id).length}</span></a><a title="Usuarios" aria-label="Usuarios" className={activeView === 'team' ? 'active' : ''} onClick={() => { setActiveView('team'); setMobileSidebarOpen(false); }}><Users size={18} />Usuarios</a><p className="nav-label second">CENTRO</p><a title="Sedes y aulas" aria-label="Sedes y aulas" className={activeView === 'spaces' ? 'active' : ''} onClick={() => { setActiveView('spaces'); setMobileSidebarOpen(false); }}><Building2 size={18} />Sedes y aulas</a><a title="Configuración" aria-label="Configuración" className={activeView === 'settings' ? 'active' : ''} onClick={() => { setActiveView('settings'); setMobileSidebarOpen(false); }}><Settings size={18} />Configuración</a></nav>
-      <div className="help-card"><div className="help-icon"><MessageCircle size={17} /></div><strong>¿Necesitas ayuda?</strong><span>Consulta cómo funciona arreglos.</span><button type="button">Ver guía <ChevronRight size={14} /></button></div>
+      <div className="help-card"><button type="button" className="help-icon" aria-label="Abrir guía de arreglos" title="Guía de arreglos" onClick={() => { setMobileSidebarOpen(false); setHelpOpen(true); }}><MessageCircle size={17} /></button><strong>¿Necesitas ayuda?</strong><span>Consulta cómo funciona arreglos.</span><button type="button" onClick={() => { setMobileSidebarOpen(false); setHelpOpen(true); }}>Ver guía <ChevronRight size={14} /></button></div>
     </aside>
     {mobileSidebarOpen && <button className="mobile-sidebar-backdrop" type="button" aria-label="Cerrar menú" onClick={() => setMobileSidebarOpen(false)} />}
     <main className="main-content">
@@ -191,6 +192,7 @@ function App() {
         </div>
       </div>
     </main>
+    {helpOpen && <HelpGuide onClose={() => setHelpOpen(false)} />}
       {showNew && <RepairFormModal repair={editingRepair} campuses={campuses} user={user} role={role} canDelete={canManageRepairs || String(editingRepair?.author_id || '') === String(user.id)} onClose={() => { setShowNew(false); setEditingRepair(null); }} onDelete={() => editingRepair && deleteRepair(editingRepair)} onSubmit={saveRepair} />}
     {toast && <div className="toast"><Check size={17} />{toast}</div>}
   </div>;
@@ -198,6 +200,10 @@ function App() {
 
 function NotificationsMenu({ items, unreadCount, onOpen, onReadAll, onClose }) {
   return <section className="notifications-menu" aria-label="Notificaciones"><div className="notifications-menu-head"><div><strong>Notificaciones</strong><span>{unreadCount ? `${unreadCount} sin leer` : 'Todo al día'}</span></div><div>{unreadCount > 0 && <button type="button" onClick={onReadAll}>Marcar todas como leídas</button>}<IconButton label="Cerrar notificaciones" onClick={onClose}><X size={16} /></IconButton></div></div><div className="notifications-list">{items.map(item => <button type="button" className={`notification-item ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => onOpen(item)}><span className="notification-item-icon"><Hammer size={16} /></span><span className="notification-item-content"><strong>{item.title}</strong><span>{item.body}</span><small>{new Date(item.created_at).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></span>{!item.read_at && <i aria-label="Sin leer" />}</button>)}{items.length === 0 && <div className="notifications-empty"><Bell size={20} /><span>No tienes notificaciones todavía.</span></div>}</div></section>;
+}
+
+function HelpGuide({ onClose }) {
+  return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal help-guide" role="dialog" aria-modal="true" aria-labelledby="help-guide-title"><div className="modal-head"><div><span className="eyebrow">GUÍA RÁPIDA</span><h2 id="help-guide-title">Cómo usar Arreglos</h2></div><IconButton label="Cerrar guía" onClick={onClose}><X size={19} /></IconButton></div><ol className="guide-steps"><li><strong>Crea una ficha</strong><span>Pulsa <b>Nueva ficha</b>, describe el problema y elige primero la sede y después el aula.</span></li><li><strong>Consulta el progreso</strong><span>Pulsa una fila para ver el detalle. La ficha pasa por Recibida, Asignada, En progreso y Realizada.</span></li><li><strong>Asigna y coordina</strong><span>Gestores y dirección pueden asignar personal de mantenimiento o gestores desde el detalle.</span></li><li><strong>Habla en los comentarios</strong><span>Usa el campo de comentarios para coordinar el arreglo. Se notificará a la otra persona relacionada con la asignación.</span></li></ol><div className="guide-roles"><h3>Según tu perfil</h3><p><b>Profesor o empleado:</b> crea fichas y edita o elimina las que hayas creado.</p><p><b>Mantenimiento:</b> consulta las fichas asignadas, actualiza el progreso y comenta.</p><p><b>Gestor o dirección:</b> gestiona todas las fichas, asignaciones, usuarios, sedes y aulas.</p></div><div className="guide-foot"><Bell size={16} /><span>La campana muestra avisos pendientes. En <b>Configuración</b> puedes activar las notificaciones push y personalizar la identidad del colegio.</span></div><div className="modal-actions"><button type="button" className="primary-button" onClick={onClose}>Entendido</button></div></section></div>;
 }
 
 function AccountMenu({ user, role, schools, currentSchoolId, onSwitchSchool, onLogout }) {
