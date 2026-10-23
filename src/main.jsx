@@ -48,6 +48,9 @@ function App() {
   const [campuses, setCampuses] = useState([]);
   const [notificationAvailability, setNotificationAvailability] = useState({ emailConfigured: false, pushConfigured: false });
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const detailPanelRef = useRef(null);
   const selected = repairs.find(item => item.id === selectedId) || repairs[0];
   const filtered = repairs.filter(item => (activeView !== 'mine' || item.author_id === user?.id) && (statusFilter === 'Todas' || item.status === statusFilter) && `${item.title} ${item.place} ${item.id}`.toLowerCase().includes(search.toLowerCase()));
@@ -86,6 +89,17 @@ function App() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    let active = true;
+    const loadNotifications = async () => {
+      try { const data = await apiRequest('/notifications'); if (active) { setNotifications(data.notifications || []); setUnreadNotifications(data.unreadCount || 0); } } catch {}
+    };
+    loadNotifications();
+    const timer = window.setInterval(loadNotifications, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [user?.id]);
+
   const notify = (message) => { setToast(message); window.setTimeout(() => setToast(''), 2800); };
   const changeStatus = async (status) => { const data = await apiRequest(`/repairs/${selected.id}`, { method: 'PATCH', body: JSON.stringify({ status, assignee_id: selected.assigneeId || null }) }); const updated = normalizeRepair(data.repair); setRepairs(items => items.map(item => item.id === selected.id ? { ...item, ...updated } : item)); notify(`Ficha ${selected.id} actualizada`); };
   const assignRepair = async (assigneeId) => { const data = await apiRequest(`/repairs/${selected.id}`, { method: 'PATCH', body: JSON.stringify({ status: assigneeId ? 'Asignada' : 'Recibida', assignee_id: assigneeId || null }) }); const updated = normalizeRepair(data.repair); setRepairs(items => items.map(item => item.id === selected.id ? { ...item, ...updated } : item)); notify('Responsable actualizado'); };
@@ -95,6 +109,20 @@ function App() {
   const addPlace = async (campusId, name) => { const result = await apiRequest('/repair-places', { method: 'POST', body: JSON.stringify({ campus_id: campusId, name }) }); setCampuses(items => items.map(campus => campus.id === campusId ? { ...campus, places: [...campus.places, { id: result.place.id, name: result.place.name }] } : campus)); notify('Lugar añadido'); };
   const renamePlace = async (placeId, name) => { const result = await apiRequest(`/repair-places/${placeId}`, { method: 'PATCH', body: JSON.stringify({ name }) }); setCampuses(items => items.map(campus => ({ ...campus, places: campus.places.map(place => place.id === placeId ? { ...place, name: result.place.name } : place) }))); notify('Lugar actualizado'); };
   const deletePlace = async (campusId, place) => { if (!window.confirm(`¿Eliminar el lugar "${place.name}"?`)) return; await apiRequest(`/repair-places/${place.id}`, { method: 'DELETE' }); setCampuses(items => items.map(campus => campus.id === campusId ? { ...campus, places: campus.places.filter(item => item.id !== place.id) } : campus)); notify('Lugar eliminado'); };
+  const openNotification = async (notification) => {
+    if (!notification.read_at) {
+      try { await apiRequest(`/notifications/${notification.id}/read`, { method: 'PATCH' }); setNotifications(items => items.map(item => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item)); setUnreadNotifications(count => Math.max(0, count - 1)); }
+      catch (error) { notify(error.message || 'No se pudo marcar como leída'); }
+    }
+    setNotificationsOpen(false);
+    setActiveView('dashboard');
+    const repair = repairs.find(item => item.id === String(notification.repair_id));
+    if (repair) openRepair(repair);
+  };
+  const markAllNotificationsRead = async () => {
+    try { await apiRequest('/notifications/read-all', { method: 'PATCH' }); const now = new Date().toISOString(); setNotifications(items => items.map(item => ({ ...item, read_at: item.read_at || now }))); setUnreadNotifications(0); }
+    catch (error) { notify(error.message || 'No se pudieron marcar como leídas'); }
+  };
   const togglePush = async () => {
     try {
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('Este navegador no permite notificaciones push.');
@@ -131,7 +159,7 @@ function App() {
       <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><MessageCircle size={17} /></div><strong>¿Necesitas ayuda?</strong><span>Consulta cómo funciona arreglos.</span><button>Ver guía <ChevronRight size={14} /></button></div><div className="user-mini"><div className="avatar avatar-green">{user.initials || user.name?.slice(0, 2).toUpperCase()}</div><div><strong>{user.name}</strong><span>{role}</span></div><MoreHorizontal size={18} /></div></div>
     </aside>
     <main className="main-content">
-       <header className="topbar"><div className="mobile-brand"><IconButton label="Abrir menú"><Menu size={21} /></IconButton><span>arreglos</span></div><div className="breadcrumb"><span>Panel general</span><ChevronRight size={14} /><strong>Fichas de arreglos</strong></div><div className="top-actions"><div className="role-select"><UserRound size={15} /><span>{role}</span></div><IconButton label="Notificaciones" className="notification"><Bell size={19} /><i /></IconButton><button type="button" className="avatar avatar-green top-avatar account-trigger" onClick={() => setAccountOpen(open => !open)} aria-label="Abrir menú de cuenta">{user.initials || user.name?.slice(0, 2).toUpperCase()}</button></div></header>{accountOpen && <AccountMenu user={user} role={role} onLogout={logout} />}
+       <header className="topbar"><div className="mobile-brand"><IconButton label="Abrir menú"><Menu size={21} /></IconButton><span>arreglos</span></div><div className="breadcrumb"><span>Panel general</span><ChevronRight size={14} /><strong>Fichas de arreglos</strong></div><div className="top-actions"><div className="role-select"><UserRound size={15} /><span>{role}</span></div><button type="button" className={`icon-button notification ${notificationsOpen ? 'is-open' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setAccountOpen(false); }} aria-label={`Notificaciones${unreadNotifications ? `, ${unreadNotifications} sin leer` : ''}`} aria-expanded={notificationsOpen}><Bell size={19} />{unreadNotifications > 0 && <i />}</button><button type="button" className="avatar avatar-green top-avatar account-trigger" onClick={() => { setAccountOpen(open => !open); setNotificationsOpen(false); }} aria-label="Abrir menú de cuenta">{user.initials || user.name?.slice(0, 2).toUpperCase()}</button></div></header>{notificationsOpen && <NotificationsMenu items={notifications} unreadCount={unreadNotifications} onOpen={openNotification} onReadAll={markAllNotificationsRead} onClose={() => setNotificationsOpen(false)} />}{accountOpen && <AccountMenu user={user} role={role} onLogout={logout} />}
        <div className={`page-wrap ${activeView}`}>
         <div className="page-heading"><div><div className="eyebrow">MIÉRCOLES, 23 DE OCTUBRE DE 2024</div><h1>Fichas de arreglos</h1><p>Organiza, asigna y haz seguimiento de los arreglos del centro.</p></div><button className="primary-button" onClick={() => setShowNew(true)}><Plus size={18} />Nueva ficha</button></div>
          <section className="stats-grid"><div className="stat-card"><div className="stat-icon all"><FilePlus2 size={19} /></div><div><span>Total de fichas</span><strong>{repairs.length}</strong><small>+2 esta semana</small></div></div><div className="stat-card"><div className="stat-icon orange"><Clock3 size={19} /></div><div><span>Por atender</span><strong>{count('Recibida') + count('Asignada')}</strong><small>Requieren atención</small></div></div><div className="stat-card"><div className="stat-icon blue"><Hammer size={19} /></div><div><span>En progreso</span><strong>{count('En progreso')}</strong><small>En manos del equipo</small></div></div><div className="stat-card"><div className="stat-icon green"><Check size={19} /></div><div><span>Realizadas</span><strong>{count('Realizada')}</strong><small>Este mes</small></div></div></section>
@@ -147,6 +175,10 @@ function App() {
       {showNew && <RepairFormModal repair={editingRepair} campuses={campuses} user={user} role={role} canDelete={canManageRepairs || String(editingRepair?.author_id || '') === String(user.id)} onClose={() => { setShowNew(false); setEditingRepair(null); }} onDelete={() => editingRepair && deleteRepair(editingRepair)} onSubmit={saveRepair} />}
     {toast && <div className="toast"><Check size={17} />{toast}</div>}
   </div>;
+}
+
+function NotificationsMenu({ items, unreadCount, onOpen, onReadAll, onClose }) {
+  return <section className="notifications-menu" aria-label="Notificaciones"><div className="notifications-menu-head"><div><strong>Notificaciones</strong><span>{unreadCount ? `${unreadCount} sin leer` : 'Todo al día'}</span></div><div>{unreadCount > 0 && <button type="button" onClick={onReadAll}>Marcar todas como leídas</button>}<IconButton label="Cerrar notificaciones" onClick={onClose}><X size={16} /></IconButton></div></div><div className="notifications-list">{items.map(item => <button type="button" className={`notification-item ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => onOpen(item)}><span className="notification-item-icon"><Hammer size={16} /></span><span className="notification-item-content"><strong>{item.title}</strong><span>{item.body}</span><small>{new Date(item.created_at).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</small></span>{!item.read_at && <i aria-label="Sin leer" />}</button>)}{items.length === 0 && <div className="notifications-empty"><Bell size={20} /><span>No tienes notificaciones todavía.</span></div>}</div></section>;
 }
 
 function AccountMenu({ user, role, onLogout }) {

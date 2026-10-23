@@ -105,6 +105,19 @@ app.delete('/api/notifications/push/subscriptions', async (req, res) => {
   await pool.query('DELETE FROM arreglos.push_subscriptions WHERE school_id=$1 AND user_id=$2 AND endpoint=$3', [req.schoolId, req.user.id, endpoint]);
   res.status(204).end();
 });
+app.get('/api/notifications', async (req, res) => {
+  const result = await pool.query('SELECT id,repair_id,title,body,created_at,read_at FROM arreglos.notifications WHERE school_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 40', [req.schoolId, req.user.id]);
+  const unread = await pool.query('SELECT COUNT(*)::integer AS count FROM arreglos.notifications WHERE school_id=$1 AND user_id=$2 AND read_at IS NULL', [req.schoolId, req.user.id]);
+  res.json({ notifications: result.rows, unreadCount: unread.rows[0]?.count || 0 });
+});
+app.patch('/api/notifications/read-all', async (req, res) => {
+  await pool.query('UPDATE arreglos.notifications SET read_at=CURRENT_TIMESTAMP WHERE school_id=$1 AND user_id=$2 AND read_at IS NULL', [req.schoolId, req.user.id]);
+  res.status(204).end();
+});
+app.patch('/api/notifications/:id/read', async (req, res) => {
+  await pool.query('UPDATE arreglos.notifications SET read_at=CURRENT_TIMESTAMP WHERE id=$1 AND school_id=$2 AND user_id=$3 AND read_at IS NULL', [req.params.id, req.schoolId, req.user.id]);
+  res.status(204).end();
+});
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
 async function directory(req) {
   const response = await fetch(`${intranetUrl}/api/directory/users`, { headers: { cookie: req.headers.cookie || '' } });
@@ -124,7 +137,11 @@ async function dispatchNotification(req, { userIds = [], profiles = [], subject,
       result.rows.forEach(row => recipients.add(String(row.user_id)));
     }
     recipients.delete(String(req.user.id));
-    const emails = [...new Set(users.filter(user => recipients.has(String(user.id))).map(user => user.email).filter(Boolean))];
+    const recipientUsers = users.filter(user => recipients.has(String(user.id)));
+    const recipientIds = [...new Set(recipientUsers.map(user => String(user.id)))];
+    const emails = [...new Set(recipientUsers.map(user => user.email).filter(Boolean))];
+    if (recipientIds.length) await pool.query(`INSERT INTO arreglos.notifications (school_id,user_id,repair_id,title,body)
+      SELECT $1, recipient_id, $2, $3, $4 FROM unnest($5::varchar[]) AS recipients(recipient_id)`, [req.schoolId, repairId, subject, text(body, 2000), recipientIds]);
     const notificationUrl = `https://arreglos.gecoas.es/?repair=${encodeURIComponent(repairId)}`;
     if (pushConfigured && recipients.size) {
       const subscriptions = await pool.query('SELECT id,user_id,endpoint,p256dh,auth FROM arreglos.push_subscriptions WHERE school_id=$1 AND user_id=ANY($2::varchar[])', [req.schoolId, [...recipients]]);

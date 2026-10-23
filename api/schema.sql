@@ -67,6 +67,18 @@ CREATE TABLE IF NOT EXISTS arreglos.push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON arreglos.push_subscriptions (school_id, user_id);
 
+CREATE TABLE IF NOT EXISTS arreglos.notifications (
+  id BIGSERIAL PRIMARY KEY,
+  school_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(128) NOT NULL,
+  repair_id BIGINT NOT NULL REFERENCES arreglos.repairs(id) ON DELETE CASCADE,
+  title VARCHAR(180) NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON arreglos.notifications (school_id, user_id, created_at DESC) WHERE read_at IS NULL;
+
 INSERT INTO arreglos.campuses (id, school_id, name, sort_order) VALUES
   ('alcaste', 'alcaste', 'Alcaste', 1), ('las-fuentes', 'alcaste', 'Las Fuentes', 2)
 ON CONFLICT (id) DO NOTHING;
