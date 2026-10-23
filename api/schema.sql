@@ -68,4 +68,5 @@ CROSS JOIN (VALUES
 ) AS course(name, position)
 CROSS JOIN (VALUES ('A', 0), ('B', 1)) AS section(name, position)
 WHERE campus.school_id = 'alcaste'
+  AND campus.id = CASE WHEN course.position <= 6 THEN 'alcaste' ELSE 'las-fuentes' END
 ON CONFLICT (school_id, campus_id, name) DO NOTHING;

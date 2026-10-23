@@ -18,9 +18,24 @@ async function init() {
   pool = new Pool({ connectionString: sourceUrl.toString() });
   await pool.query(fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
   await migrateLegacyData();
+  await rebalanceClassrooms();
   const manager = await sourcePool.query("SELECT id, school_id FROM public.users WHERE LOWER(email) = 'gbailly@alcaste-lasfuentes.com'");
   for (const user of manager.rows) await pool.query("INSERT INTO arreglos.user_profiles (school_id,user_id,profile) VALUES ($1,$2,'gestor') ON CONFLICT (school_id,user_id) DO UPDATE SET profile='gestor',active=TRUE", [user.school_id, user.id]);
   app.listen(process.env.PORT || 3001, '0.0.0.0', () => console.log('Arreglos API listening'));
+}
+
+async function rebalanceClassrooms() {
+  const courses = ["1º Primaria", "2º Primaria", "3º Primaria", "4º Primaria", "5º Primaria", "6º Primaria", "1º ESO", "2º ESO", "3º ESO", "4º ESO", "1º Bachillerato", "2º Bachillerato"];
+  const classes = courses.flatMap(course => [`${course} A`, `${course} B`]);
+  const targetCampus = name => name.includes('Primaria') ? 'alcaste' : 'las-fuentes';
+  for (const name of classes) {
+    const campusId = targetCampus(name);
+    await pool.query("INSERT INTO arreglos.places (school_id,campus_id,name,sort_order,active) VALUES ('alcaste',$1,$2,$3,TRUE) ON CONFLICT (school_id,campus_id,name) DO NOTHING", [campusId,name,classes.indexOf(name)]);
+    const canonical = await pool.query('SELECT id FROM arreglos.places WHERE school_id=$1 AND campus_id=$2 AND name=$3', ['alcaste',campusId,name]);
+    await pool.query(`UPDATE arreglos.repairs r SET place_id=$1,campus_id=$2
+      FROM arreglos.places old WHERE r.place_id=old.id AND old.school_id=$3 AND old.name=$4 AND old.campus_id<>$2`, [canonical.rows[0].id,campusId,'alcaste',name]);
+    await pool.query('UPDATE arreglos.places SET active=FALSE WHERE school_id=$1 AND name=$2 AND campus_id<>$3', ['alcaste',name,campusId]);
+  }
 }
 
 async function migrateLegacyData() {
@@ -150,10 +165,12 @@ app.post('/api/repair-places', async (req, res) => {
   if (!canManage(req)) return res.status(403).json({ error: 'Solo los gestores pueden añadir lugares' });
   const campusId = text(req.body?.campus_id, 64), name = text(req.body?.name, 128);
   if (!campusId || !name) return res.status(400).json({ error: 'La sede y el nombre son obligatorios' });
+  if (isClassroom(name) && classCampus(name) !== campusId) return res.status(400).json({ error: 'Primaria pertenece a Alcaste; ESO y Bachillerato pertenecen a Las Fuentes' });
   const result = await pool.query(
     `INSERT INTO arreglos.places (school_id, campus_id, name, sort_order)
      SELECT $1, id, $3, COALESCE((SELECT MAX(sort_order) + 1 FROM arreglos.places WHERE school_id = $1 AND campus_id = id), 1)
-       FROM arreglos.campuses WHERE school_id = $1 AND id = $2 AND active = TRUE RETURNING id, campus_id, name`,
+       FROM arreglos.campuses WHERE school_id = $1 AND id = $2 AND active = TRUE
+     ON CONFLICT (school_id, campus_id, name) DO UPDATE SET active=TRUE RETURNING id, campus_id, name`,
     [req.schoolId, campusId, name]);
   if (!result.rows.length) return res.status(404).json({ error: 'Sede no encontrada' });
   res.status(201).json({ place: result.rows[0] });
@@ -163,6 +180,7 @@ app.patch('/api/repair-places/:id', async (req, res) => {
   if (!canManage(req)) return res.status(403).json({ error: 'Solo los gestores pueden editar lugares' });
   const name = text(req.body?.name, 128);
   if (!name) return res.status(400).json({ error: 'El nombre es obligatorio' });
+  if (isClassroom(name) && classCampus(name) !== (await pool.query('SELECT campus_id FROM arreglos.places WHERE id=$1 AND school_id=$2', [req.params.id, req.schoolId])).rows[0]?.campus_id) return res.status(400).json({ error: 'Primaria pertenece a Alcaste; ESO y Bachillerato pertenecen a Las Fuentes' });
   const result = await pool.query('UPDATE arreglos.places SET name = $1 WHERE id = $2 AND school_id = $3 RETURNING id, campus_id, name', [name, req.params.id, req.schoolId]);
   if (!result.rows.length) return res.status(404).json({ error: 'Lugar no encontrado' });
   res.json({ place: result.rows[0] });
@@ -174,6 +192,9 @@ app.delete('/api/repair-places/:id', async (req, res) => {
   if (!result.rows.length) return res.status(404).json({ error: 'Lugar no encontrado' });
   res.status(204).end();
 });
+
+function isClassroom(name) { return /^(?:[1-6]º Primaria|[1-4]º ESO|[1-2]º Bachillerato)\s+[AB]$/.test(name); }
+function classCampus(name) { return name.includes('Primaria') ? 'alcaste' : 'las-fuentes'; }
 
 app.post('/api/repairs', async (req, res) => {
   const title = text(req.body?.title, 255), description = text(req.body?.description, 5000);
@@ -202,6 +223,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
   if (manager && 'assignee_id' in (req.body || {})) {
     assigneeId = req.body.assignee_id || null;
     if (assigneeId) {
+      if (!(await directory(req)).some(user => String(user.id) === String(assigneeId))) return res.status(400).json({ error: 'Solo se pueden asignar empleados activos del colegio' });
       const profile = await pool.query("SELECT profile FROM arreglos.user_profiles WHERE school_id = $1 AND user_id = $2 AND active = TRUE", [req.schoolId, assigneeId]);
       if ((profile.rows[0]?.profile || 'profesor') !== 'mantenimiento') return res.status(400).json({ error: 'La persona asignada debe tener perfil de Mantenimiento' });
     }
@@ -240,5 +262,8 @@ app.post('/api/repairs/:id/comments', async (req, res) => {
   res.status(201).json({ comment: { ...result.rows[0], author_name: req.user.name, author_initials: req.user.initials } });
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', async (_req, res) => {
+  try { await pool.query('SELECT 1'); res.json({ ok: true }); }
+  catch { res.status(503).json({ ok: false }); }
+});
 init().catch(error => { console.error('Arreglos API startup failed:', error); process.exit(1); });

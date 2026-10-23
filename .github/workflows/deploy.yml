@@ -64,3 +64,6 @@ jobs:
             export INTRANET_DATABASE_URL
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
           "
+
+      - name: Verify production API
+        run: curl --fail --silent --show-error --retry 20 --retry-delay 3 --retry-all-errors https://arreglos.gecoas.es/health
