@@ -6,5 +6,7 @@ services:
     image: arreglos:prod
     container_name: arreglos
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5173:80"
