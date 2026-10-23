@@ -153,7 +153,7 @@ async function dispatchNotification(req, { userIds = [], profiles = [], subject,
     if (!emails.length) return;
     const response = await fetch(`${intranetUrl}/api/notifications/dispatch`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: req.headers.cookie || '' },
+      headers: { 'content-type': 'application/json', cookie: req.headers.cookie || '', origin: 'https://arreglos.gecoas.es' },
       body: JSON.stringify({ recipients: emails, subject, body: `${body}\n\nVer ficha: ${notificationUrl}`, repair_id: repairId }),
     });
     if (!response.ok) console.error('Notification relay failed:', response.status, await response.text().catch(() => ''));
