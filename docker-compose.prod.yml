@@ -1,0 +1,10 @@
+services:
+  arreglos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: arreglos:prod
+    container_name: arreglos
+    restart: unless-stopped
+    ports:
+      - "5173:80"

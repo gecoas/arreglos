@@ -1,0 +1,62 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-arreglos
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect to production network
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ vars.PROD_HOST }}
+
+      - name: Deploy by SSH
+        env:
+          PROD_HOST: ${{ vars.PROD_HOST }}
+          PROD_USER: ${{ vars.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          : "${PROD_HOST:?Falta PROD_HOST}"
+          : "${PROD_USER:?Falta PROD_USER}"
+          : "${PROD_SSH_KEY:?Falta PROD_SSH_KEY}"
+          test "$PROD_USER" = deploy
+
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$PROD_SSH_KEY" > "$key_file"
+          chmod 600 "$key_file"
+
+          ssh_opts=(-i "$key_file" -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o BatchMode=yes)
+          ssh "${ssh_opts[@]}" "$PROD_USER@$PROD_HOST" "
+            set -euo pipefail
+            mkdir -p /opt/proyectos/arreglos
+            cd /opt/proyectos/arreglos
+            if [ ! -d .git ]; then
+              git init -q
+              git remote add origin git@github.com:gecoas/arreglos.git
+            fi
+            git fetch -q origin '$GITHUB_SHA'
+            git checkout -q --detach --force '$GITHUB_SHA'
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+          "
