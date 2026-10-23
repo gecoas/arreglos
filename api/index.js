@@ -234,7 +234,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
   const finalStatus = assigneeId && status === 'Recibida' ? 'Asignada' : status;
   await pool.query(
     `UPDATE arreglos.repairs SET title=$1, description=$2, campus_id=$3, place_id=$4, urgency=$5, status=$6, assignee_id=$7, updated_at=CURRENT_TIMESTAMP,
-      completed_at=CASE WHEN $6='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$8 AND school_id=$9`,
+      completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$8 AND school_id=$9`,
     [canEditDetails ? text(req.body?.title ?? current.title,255) : current.title, canEditDetails ? text(req.body?.description ?? current.description,5000) : current.description, campusId, placeId,
       canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, req.params.id, req.schoolId]);
   res.json({ repair: await loadRepair(req.params.id, req) });
