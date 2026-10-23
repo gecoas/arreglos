@@ -65,4 +65,4 @@ draw.text((564, 385), "Solicitud y seguimiento de", font=font(29), fill="#5c5753
 draw.text((564, 430), "reparaciones del centro", font=font(29), fill="#5c5753")
 draw.rounded_rectangle((564, 507, 1100, 553), radius=20, fill="#f1e9df")
 draw.text((586, 518), "GESTIÓN PARA LA COMUNIDAD EDUCATIVA", font=font(14, bold=True), fill="#6c514a")
-og.save(PUBLIC / "og-image.png", "PNG", optimize=True)
+og.save(PUBLIC / "og-image-coas.png", "PNG", optimize=True)
