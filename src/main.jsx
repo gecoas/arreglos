@@ -46,6 +46,8 @@ function App() {
   const [toast, setToast] = useState('');
   const [assignees, setAssignees] = useState([]);
   const [campuses, setCampuses] = useState([]);
+  const [notificationAvailability, setNotificationAvailability] = useState({ emailConfigured: false, pushConfigured: false });
+  const [pushEnabled, setPushEnabled] = useState(false);
   const detailPanelRef = useRef(null);
   const selected = repairs.find(item => item.id === selectedId) || repairs[0];
   const filtered = repairs.filter(item => (activeView !== 'mine' || item.author_id === user?.id) && (statusFilter === 'Todas' || item.status === statusFilter) && `${item.title} ${item.place} ${item.id}`.toLowerCase().includes(search.toLowerCase()));
@@ -70,10 +72,15 @@ function App() {
         const data = await apiRequest('/repairs');
         const loaded = data.repairs.map(normalizeRepair);
         setRepairs(loaded);
-        setSelectedId(loaded[0]?.id || null);
+        const linkedRepair = new URLSearchParams(window.location.search).get('repair');
+        setSelectedId(loaded.find(item => item.id === linkedRepair)?.id || loaded[0]?.id || null);
         try { setCampuses((await apiRequest('/repair-places')).campuses || []); } catch (error) { setAuthError(error.message); }
         setRole({ gestor: 'Gestor', direccion: 'Dirección', mantenimiento: 'Mantenimiento', profesor: 'Profesor' }[profile.profile] || 'Profesor');
         try { setAssignees((await apiRequest('/repair-users')).users || []); } catch (error) { setAuthError(error.message); }
+        try { setNotificationAvailability(await apiRequest('/notifications/availability')); } catch { setNotificationAvailability({ emailConfigured: false, pushConfigured: false }); }
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+          try { const registration = await navigator.serviceWorker.register('/sw.js'); setPushEnabled(Boolean(await registration.pushManager.getSubscription())); } catch { setPushEnabled(false); }
+        }
       } catch (error) { if (error.status !== 401) setAuthError(error.message); }
       finally { setAuthLoading(false); }
     })();
@@ -88,7 +95,30 @@ function App() {
   const addPlace = async (campusId, name) => { const result = await apiRequest('/repair-places', { method: 'POST', body: JSON.stringify({ campus_id: campusId, name }) }); setCampuses(items => items.map(campus => campus.id === campusId ? { ...campus, places: [...campus.places, { id: result.place.id, name: result.place.name }] } : campus)); notify('Lugar añadido'); };
   const renamePlace = async (placeId, name) => { const result = await apiRequest(`/repair-places/${placeId}`, { method: 'PATCH', body: JSON.stringify({ name }) }); setCampuses(items => items.map(campus => ({ ...campus, places: campus.places.map(place => place.id === placeId ? { ...place, name: result.place.name } : place) }))); notify('Lugar actualizado'); };
   const deletePlace = async (campusId, place) => { if (!window.confirm(`¿Eliminar el lugar "${place.name}"?`)) return; await apiRequest(`/repair-places/${place.id}`, { method: 'DELETE' }); setCampuses(items => items.map(campus => campus.id === campusId ? { ...campus, places: campus.places.filter(item => item.id !== place.id) } : campus)); notify('Lugar eliminado'); };
-  const logout = async () => { try { await apiRequest('/auth/logout', { method: 'POST' }); } finally { setUser(null); setAccountOpen(false); } };
+  const togglePush = async () => {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error('Este navegador no permite notificaciones push.');
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const existing = await registration.pushManager.getSubscription();
+      if (existing) {
+        await apiRequest('/notifications/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint: existing.endpoint }) });
+        await existing.unsubscribe();
+        setPushEnabled(false);
+        notify('Notificaciones push desactivadas');
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Permite las notificaciones en el navegador para activarlas.');
+      const { publicKey } = await apiRequest('/notifications/push/vapid-public-key');
+      const base64Key = publicKey.replace(/-/g, '+').replace(/_/g, '/');
+      const applicationServerKey = Uint8Array.from(atob(base64Key.padEnd(Math.ceil(base64Key.length / 4) * 4, '=')), character => character.charCodeAt(0));
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+      await apiRequest('/notifications/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) });
+      setPushEnabled(true);
+      notify('Notificaciones push activadas');
+    } catch (error) { notify(error.message || 'No se pudieron cambiar las notificaciones push'); }
+  };
+  const logout = async () => { try { const registration = await navigator.serviceWorker?.getRegistration('/'); const subscription = await registration?.pushManager?.getSubscription(); if (subscription) { await apiRequest('/notifications/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint: subscription.endpoint }) }).catch(() => {}); await subscription.unsubscribe(); } } catch {} try { await apiRequest('/auth/logout', { method: 'POST' }); } finally { setUser(null); setAccountOpen(false); } };
 
   if (authLoading) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark"><Hammer size={19} /></div><h1>arreglos</h1><p>Comprobando tu sesión...</p></div></div>;
   if (!user) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark"><Hammer size={19} /></div><span className="eyebrow">COLEGIO SAN MARCOS</span><h1>arreglos</h1><p>Gestiona y sigue los arreglos del centro desde un solo lugar.</p><button className="google-button" onClick={() => window.location.assign(`/api/auth/google?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`)}><span>G</span> Continuar con Google</button>{authError && <div className="auth-error">{authError}</div>}<small>Accede con tu cuenta autorizada del colegio.</small></div></div>;
@@ -107,7 +137,7 @@ function App() {
          <section className="stats-grid"><div className="stat-card"><div className="stat-icon all"><FilePlus2 size={19} /></div><div><span>Total de fichas</span><strong>{repairs.length}</strong><small>+2 esta semana</small></div></div><div className="stat-card"><div className="stat-icon orange"><Clock3 size={19} /></div><div><span>Por atender</span><strong>{count('Recibida') + count('Asignada')}</strong><small>Requieren atención</small></div></div><div className="stat-card"><div className="stat-icon blue"><Hammer size={19} /></div><div><span>En progreso</span><strong>{count('En progreso')}</strong><small>En manos del equipo</small></div></div><div className="stat-card"><div className="stat-icon green"><Check size={19} /></div><div><span>Realizadas</span><strong>{count('Realizada')}</strong><small>Este mes</small></div></div></section>
          {activeView === 'team' && <TeamView assignees={assignees} onProfile={updateProfile} canManage={user.role === 'admin' || ['gestor', 'direccion'].includes(user.repair_profile)} />}
            {activeView === 'spaces' && <SpacesView repairs={repairs} campuses={campuses} canManage={user.role === 'admin' || ['gestor', 'direccion'].includes(user.repair_profile)} onAdd={addPlace} onRename={renamePlace} onDelete={deletePlace} />}
-          {activeView === 'settings' && <SettingsView />}
+          {activeView === 'settings' && <SettingsView availability={notificationAvailability} pushEnabled={pushEnabled} onTogglePush={togglePush} />}
           <RepairDashboard repairs={filtered} total={repairs.length} search={search} onSearch={setSearch} statusFilter={statusFilter} onStatusFilter={setStatusFilter} selected={selected && { ...selected, currentUserId: user.id }} detailRef={detailPanelRef} onSelect={openRepair} onEdit={openEditRepair} canManage={canManageRepairs} canUpdateStatus={canUpdateSelectedStatus} assignees={assignees.filter(person => person.profile === 'mantenimiento')} onStatus={changeStatus} onAssign={assignRepair} onNotify={notify} />
          <div className="content-grid"><section className="list-panel"><div className="panel-head"><div><h2>Todas las fichas <span>{filtered.length}</span></h2><p>Últimas solicitudes registradas en el centro</p></div><IconButton label="Más opciones"><MoreHorizontal size={20} /></IconButton></div><div className="toolbar"><div className="search-box"><Search size={17} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por título, lugar o código..." /></div><div className="filter-select"><Filter size={15} /><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label="Filtrar por estado"><option>Todas</option><option>Recibida</option><option>Asignada</option><option>En progreso</option><option>Realizada</option></select><ChevronDown size={14} /></div><IconButton label="Más filtros"><SlidersHorizontal size={17} /></IconButton></div><div className="table-wrap"><table><thead><tr><th>FICHA</th><th>LUGAR</th><th>URGENCIA</th><th>ESTADO</th><th>ASIGNADA A</th><th>ACTUALIZADA</th></tr></thead><tbody>{filtered.map(item => <tr key={item.id} tabIndex={0} aria-label={`Abrir ficha ${item.title}`} className={selectedId === item.id ? 'selected-row' : ''} onClick={() => openRepair(item)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRepair(item); } }}><td><div className="repair-title"><strong>{item.title}</strong><span>{item.id} · {item.author}</span></div></td><td><div className="place"><MapPin size={14} />{item.place}</div></td><td><Urgency value={item.urgency} /></td><td><StatusPill status={item.status} /></td><td><div className="assignee">{item.assignee ? <><div className="avatar avatar-purple">{item.assignee.split(' ').map(x => x[0]).join('')}</div>{item.assignee}</> : <span className="unassigned">Sin asignar</span>}</div></td><td><span className="updated">{item.updated}</span>{item.comments > 0 && <span className="comment-count"><MessageCircle size={13} />{item.comments}</span>}</td></tr>)}</tbody></table>{filtered.length === 0 && <div className="empty">No hay fichas que coincidan con la búsqueda.</div>}</div><div className="table-footer"><span>Mostrando {filtered.length} de {repairs.length} fichas</span><div><button disabled>Anterior</button><button className="current-page">1</button><button disabled>Siguiente</button></div></div></section>
             {selected ? <div className={`${canManageRepairs ? '' : 'repair-readonly-assignment'} ${canUpdateSelectedStatus ? '' : 'repair-readonly-progress'} selected-repair-detail`}><DetailPanel repair={selected} role={role} assignees={assignees} canManage={canManageRepairs} canUpdateStatus={canUpdateSelectedStatus} onStatus={changeStatus} onAssign={assignRepair} onNotify={notify} /></div> : <div className="detail-panel empty-detail">Selecciona una ficha para ver sus detalles.</div>}
@@ -151,8 +181,8 @@ function SpacesView({ repairs, campuses, canManage, onAdd, onRename, onDelete })
   return <section className="management-card"><div className="management-head"><div><span className="eyebrow">CENTRO ESCOLAR</span><h2>Espacios y aulas</h2><p>Primaria en Alcaste · ESO y Bachillerato en Las Fuentes.</p></div><Building2 size={22} /></div><div className="campus-list">{campuses.map(campus => <div className="campus-block" key={campus.id}><h3>{campus.name}</h3><div className="space-grid">{campus.places.map(place => <div className="space-item" key={place.id}><MapPin size={17} /><strong>{place.name}</strong><span>{repairs.filter(item => String(item.place_id) === String(place.id)).length} fichas registradas</span>{canManage && <div className="place-actions"><button className="text-button edit-place" onClick={() => { const name = window.prompt('Nuevo nombre del aula', place.name); if (name?.trim()) onRename(place.id, name.trim()); }}><Pencil size={13} />Editar</button><button className="text-button delete-place" onClick={() => onDelete(campus.id, place)}><Trash2 size={13} />Eliminar</button></div>}</div>)}</div></div>)}</div>{canManage && <form className="add-place-form" onSubmit={add}><select value={newCampus} onChange={event => setNewCampus(event.target.value)}>{campuses.map(campus => <option key={campus.id} value={campus.id}>{campus.name}</option>)}</select><input value={newName} onChange={event => setNewName(event.target.value)} placeholder="Nuevo lugar o aula" /><button className="primary-button" type="submit"><Plus size={16} />Añadir lugar</button></form>}</section>;
 }
 
-function SettingsView() {
-  return <section className="management-card"><div className="management-head"><div><span className="eyebrow">CONFIGURACIÓN</span><h2>Preferencias</h2><p>Las notificaciones se gestionan con tu cuenta de la intranet.</p></div><Settings size={22} /></div><div className="settings-list"><label><span><strong>Nuevas fichas</strong><small>Recibir avisos cuando se registre un arreglo.</small></span><input type="checkbox" defaultChecked /></label><label><span><strong>Asignaciones</strong><small>Recibir avisos cuando te asignen una ficha.</small></span><input type="checkbox" defaultChecked /></label><label><span><strong>Comentarios</strong><small>Recibir avisos de actividad en tus fichas.</small></span><input type="checkbox" defaultChecked /></label></div></section>;
+function SettingsView({ availability, pushEnabled, onTogglePush }) {
+  return <section className="management-card"><div className="management-head"><div><span className="eyebrow">CONFIGURACIÓN</span><h2>Notificaciones</h2><p>Avisos para fichas nuevas, asignaciones, comentarios y cierres.</p></div><Settings size={22} /></div><div className="settings-list"><div className="notification-setting"><span><strong>Notificaciones por correo</strong><small>{availability.emailConfigured ? 'Correo SMTP configurado. Se enviarán avisos a los destinatarios de cada ficha.' : 'El correo SMTP todavía no está configurado para el colegio.'}</small></span><span className={`setting-status ${availability.emailConfigured ? 'ready' : ''}`}>{availability.emailConfigured ? 'Activas' : 'Sin configurar'}</span></div><div className="notification-setting"><span><strong>Notificaciones push</strong><small>{availability.pushConfigured ? 'Recibe avisos en este navegador cuando haya actividad en arreglos.' : 'El servicio push no está configurado en el servidor.'}</small></span><button className={pushEnabled ? 'outline-button' : 'primary-button'} type="button" onClick={onTogglePush} disabled={!availability.pushConfigured}>{pushEnabled ? 'Desactivar' : 'Activar push'}</button></div></div></section>;
 }
 
  function DetailPanel({ repair, role, assignees, canManage, canUpdateStatus, onStatus, onAssign, onEdit, onDelete, onNotify }) {

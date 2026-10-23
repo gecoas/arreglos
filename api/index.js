@@ -1,12 +1,18 @@
 import express from 'express';
 import pg from 'pg';
 import fs from 'node:fs';
+import webpush from 'web-push';
 
 const { Pool } = pg;
 const app = express();
 const sourcePool = new Pool({ connectionString: process.env.INTRANET_DATABASE_URL || process.env.DATABASE_URL });
 let pool;
 const intranetUrl = process.env.INTRANET_API_URL || 'http://intranet:80';
+const vapidSubject = process.env.VAPID_SUBJECT || '';
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
+const pushConfigured = Boolean(vapidSubject && vapidPublicKey && vapidPrivateKey);
+if (pushConfigured) webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 app.use(express.json({ limit: '1mb' }));
 
 async function init() {
@@ -81,6 +87,24 @@ app.use('/api', session);
 
 const canManage = req => ['gestor', 'direccion'].includes(req.repairProfile);
 app.get('/api/profile', (req, res) => res.json({ profile: req.repairProfile }));
+app.get('/api/notifications/push/vapid-public-key', (_req, res) => pushConfigured ? res.json({ publicKey: vapidPublicKey }) : res.status(503).json({ error: 'Las notificaciones push no están configuradas' }));
+app.post('/api/notifications/push/subscriptions', async (req, res) => {
+  if (!pushConfigured) return res.status(503).json({ error: 'Las notificaciones push no están configuradas' });
+  const endpoint = String(req.body?.endpoint || ''), p256dh = String(req.body?.keys?.p256dh || ''), auth = String(req.body?.keys?.auth || '');
+  let validEndpoint = false;
+  try { const url = new URL(endpoint); validEndpoint = url.protocol === 'https:' && (url.hostname === 'fcm.googleapis.com' || url.hostname.endsWith('.push.services.mozilla.com') || url.hostname === 'web.push.apple.com' || url.hostname.endsWith('.notify.windows.com')); } catch {}
+  if (!validEndpoint || endpoint.length > 4096 || !p256dh || p256dh.length > 512 || !auth || auth.length > 512) return res.status(400).json({ error: 'Suscripción push no válida' });
+  if (!(await directory(req)).some(user => String(user.id) === String(req.user.id))) return res.status(403).json({ error: 'Solo los empleados activos pueden suscribirse' });
+  await pool.query(`INSERT INTO arreglos.push_subscriptions (school_id,user_id,endpoint,p256dh,auth,updated_at) VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)
+    ON CONFLICT (school_id,endpoint) DO UPDATE SET user_id=EXCLUDED.user_id,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,updated_at=CURRENT_TIMESTAMP`, [req.schoolId, req.user.id, endpoint, p256dh, auth]);
+  res.status(201).json({ subscribed: true });
+});
+app.delete('/api/notifications/push/subscriptions', async (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  if (!endpoint || endpoint.length > 4096) return res.status(400).json({ error: 'Endpoint no válido' });
+  await pool.query('DELETE FROM arreglos.push_subscriptions WHERE school_id=$1 AND user_id=$2 AND endpoint=$3', [req.schoolId, req.user.id, endpoint]);
+  res.status(204).end();
+});
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
 async function directory(req) {
   const response = await fetch(`${intranetUrl}/api/directory/users`, { headers: { cookie: req.headers.cookie || '' } });
@@ -90,6 +114,35 @@ async function directory(req) {
 async function userNames(req) {
   const users = await directory(req);
   return new Map(users.map(user => [String(user.id), user]));
+}
+async function dispatchNotification(req, { userIds = [], profiles = [], subject, body, repairId }) {
+  try {
+    const users = await directory(req);
+    const recipients = new Set(userIds.map(String));
+    if (profiles.length) {
+      const result = await pool.query('SELECT user_id FROM arreglos.user_profiles WHERE school_id=$1 AND active=TRUE AND profile=ANY($2::varchar[])', [req.schoolId, profiles]);
+      result.rows.forEach(row => recipients.add(String(row.user_id)));
+    }
+    recipients.delete(String(req.user.id));
+    const emails = [...new Set(users.filter(user => recipients.has(String(user.id))).map(user => user.email).filter(Boolean))];
+    const notificationUrl = `https://arreglos.gecoas.es/?repair=${encodeURIComponent(repairId)}`;
+    if (pushConfigured && recipients.size) {
+      const subscriptions = await pool.query('SELECT id,user_id,endpoint,p256dh,auth FROM arreglos.push_subscriptions WHERE school_id=$1 AND user_id=ANY($2::varchar[])', [req.schoolId, [...recipients]]);
+      const payload = JSON.stringify({ title: subject, body: text(body, 220), url: notificationUrl, type: 'repair', notificationId: crypto.randomUUID() });
+      await Promise.allSettled(subscriptions.rows.map(async subscription => {
+        try { await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, { TTL: 86400, timeout: 5000 }); }
+        catch (error) { if (error.statusCode === 404 || error.statusCode === 410) await pool.query('DELETE FROM arreglos.push_subscriptions WHERE id=$1', [subscription.id]); else console.error('Arreglos push delivery failed:', error.statusCode || error.message); }
+      }));
+    }
+    if (!emails.length) return;
+    const response = await fetch(`${intranetUrl}/api/notifications/dispatch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: req.headers.cookie || '' },
+      body: JSON.stringify({ recipients: emails, subject, body: `${body}\n\nVer ficha: ${notificationUrl}`, repair_id: repairId }),
+    });
+    if (!response.ok) console.error('Notification relay failed:', response.status, await response.text().catch(() => ''));
+    else { const result = await response.json().catch(() => ({})); if (result.emailed < result.requested) console.warn('Some arreglos notification emails were not sent:', result); }
+  } catch (error) { console.error('Arreglos notification dispatch failed:', error); }
 }
 async function loadRepair(id, req) {
   const result = await pool.query(
@@ -206,7 +259,9 @@ app.post('/api/repairs', async (req, res) => {
     `INSERT INTO arreglos.repairs (school_id, title, description, campus_id, place_id, urgency, author_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [req.schoolId, title, description, campusId, placeId, urgency, req.user.id]);
-  res.status(201).json({ repair: await loadRepair(result.rows[0].id, req) });
+  const repair = await loadRepair(result.rows[0].id, req);
+  await dispatchNotification(req, { profiles: ['gestor', 'direccion'], subject: 'Nueva ficha de arreglo', body: `${repair.title} · ${repair.campus_name} · ${repair.place_name}`, repairId: repair.id });
+  res.status(201).json({ repair });
 });
 
 app.patch('/api/repairs/:id', async (req, res) => {
@@ -237,7 +292,14 @@ app.patch('/api/repairs/:id', async (req, res) => {
       completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$8 AND school_id=$9`,
     [canEditDetails ? text(req.body?.title ?? current.title,255) : current.title, canEditDetails ? text(req.body?.description ?? current.description,5000) : current.description, campusId, placeId,
       canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, req.params.id, req.schoolId]);
-  res.json({ repair: await loadRepair(req.params.id, req) });
+  const updated = await loadRepair(req.params.id, req);
+  if (assigneeId && String(assigneeId) !== String(current.assignee_id)) {
+    await dispatchNotification(req, { userIds: [assigneeId], profiles: ['gestor', 'direccion'], subject: 'Te han asignado un arreglo', body: `${updated.title} · ${updated.campus_name} · ${updated.place_name}`, repairId: updated.id });
+  }
+  if (finalStatus === 'Realizada' && current.status !== 'Realizada') {
+    await dispatchNotification(req, { userIds: [current.author_id], profiles: ['gestor', 'direccion'], subject: 'Ficha de arreglo realizada', body: `${updated.title} se ha marcado como realizada.`, repairId: updated.id });
+  }
+  res.json({ repair: updated });
 });
 
 app.delete('/api/repairs/:id', async (req, res) => {
@@ -260,6 +322,7 @@ app.post('/api/repairs/:id/comments', async (req, res) => {
   const body = text(req.body?.body, 2000);
   if (!body) return res.status(400).json({ error: 'El comentario no puede estar vacío' });
   const result = await pool.query('INSERT INTO arreglos.comments (repair_id, author_id, body) VALUES ($1,$2,$3) RETURNING id,body,created_at,author_id', [req.params.id, req.user.id, body]);
+  await dispatchNotification(req, { userIds: [repair.author_id, repair.assignee_id].filter(Boolean), profiles: ['gestor', 'direccion'], subject: 'Nuevo comentario en una ficha', body: `${repair.title}: ${body}`, repairId: repair.id });
   res.status(201).json({ comment: { ...result.rows[0], author_name: req.user.name, author_initials: req.user.initials } });
 });
 

@@ -60,8 +60,12 @@ jobs:
             git fetch -q origin '$GITHUB_SHA'
             git checkout -q --detach --force '$GITHUB_SHA'
             INTRANET_DATABASE_URL=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' intranet-api | grep -m1 '^DATABASE_URL=' | cut -d '=' -f2-)
+            VAPID_SUBJECT=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' intranet-api | grep -m1 '^VAPID_SUBJECT=' | cut -d '=' -f2-)
+            VAPID_PUBLIC_KEY=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' intranet-api | grep -m1 '^VAPID_PUBLIC_KEY=' | cut -d '=' -f2-)
+            VAPID_PRIVATE_KEY=\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' intranet-api | grep -m1 '^VAPID_PRIVATE_KEY=' | cut -d '=' -f2-)
             test -n "\$INTRANET_DATABASE_URL"
             export INTRANET_DATABASE_URL
+            export VAPID_SUBJECT VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
           "
 

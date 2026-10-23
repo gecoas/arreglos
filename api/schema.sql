@@ -54,6 +54,19 @@ CREATE TABLE IF NOT EXISTS arreglos.comments (
 );
 CREATE INDEX IF NOT EXISTS comments_repair_idx ON arreglos.comments (repair_id, created_at);
 
+CREATE TABLE IF NOT EXISTS arreglos.push_subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  school_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(128) NOT NULL,
+  endpoint TEXT NOT NULL,
+  p256dh VARCHAR(512) NOT NULL,
+  auth VARCHAR(512) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (school_id, endpoint)
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON arreglos.push_subscriptions (school_id, user_id);
+
 INSERT INTO arreglos.campuses (id, school_id, name, sort_order) VALUES
   ('alcaste', 'alcaste', 'Alcaste', 1), ('las-fuentes', 'alcaste', 'Las Fuentes', 2)
 ON CONFLICT (id) DO NOTHING;

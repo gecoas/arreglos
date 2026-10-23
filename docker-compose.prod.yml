@@ -9,6 +9,9 @@ services:
     environment:
       INTRANET_DATABASE_URL: ${INTRANET_DATABASE_URL:?INTRANET_DATABASE_URL must be set}
       INTRANET_API_URL: http://intranet:80
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       PORT: 3001
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
