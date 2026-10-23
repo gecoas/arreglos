@@ -59,9 +59,9 @@ function App() {
         const loaded = data.repairs.map(normalizeRepair);
         setRepairs(loaded);
         setSelectedId(loaded[0]?.id || null);
-        setCampuses((await apiRequest('/repair-places')).campuses || []);
+        try { setCampuses((await apiRequest('/repair-places')).campuses || []); } catch (error) { setAuthError(error.message); }
         setRole({ gestor: 'Gestor', direccion: 'Dirección', mantenimiento: 'Mantenimiento', profesor: 'Profesor' }[session.user.repair_profile] || 'Profesor');
-        setAssignees((await apiRequest('/repair-users')).users || []);
+        try { setAssignees((await apiRequest('/repair-users')).users || []); } catch (error) { setAuthError(error.message); }
       } catch (error) { if (error.status !== 401) setAuthError(error.message); }
       finally { setAuthLoading(false); }
     })();
