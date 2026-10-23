@@ -281,7 +281,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
     if (assigneeId) {
       if (!(await directory(req)).some(user => String(user.id) === String(assigneeId))) return res.status(400).json({ error: 'Solo se pueden asignar empleados activos del colegio' });
       const profile = await pool.query("SELECT profile FROM arreglos.user_profiles WHERE school_id = $1 AND user_id = $2 AND active = TRUE", [req.schoolId, assigneeId]);
-      if ((profile.rows[0]?.profile || 'profesor') !== 'mantenimiento') return res.status(400).json({ error: 'La persona asignada debe tener perfil de Mantenimiento' });
+      if (!['mantenimiento', 'gestor'].includes(profile.rows[0]?.profile || 'profesor')) return res.status(400).json({ error: 'La persona asignada debe tener perfil de Mantenimiento o Gestor' });
     }
   }
   const allowed = ['Recibida', 'Asignada', 'En progreso', 'Realizada'];
