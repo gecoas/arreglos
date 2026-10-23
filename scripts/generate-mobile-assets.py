@@ -6,8 +6,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / "public"
 PUBLIC.mkdir(exist_ok=True)
-GREEN = "#295c54"
-GREEN_LIGHT = "#3c766b"
+GREEN = "#811a1d"
+GREEN_LIGHT = "#a13232"
 INK = "#20302d"
 MUTED = "#647570"
 WHITE = "#ffffff"
@@ -51,5 +51,5 @@ draw.text((584, 218), "del colegio", font=font(58, bold=True), fill=GREEN)
 draw.rounded_rectangle((586, 319, 714, 327), radius=4, fill="#c4d7d0")
 draw.text((584, 361), "Solicita, asigna y sigue", font=font(30), fill=MUTED)
 draw.text((584, 406), "las reparaciones del centro.", font=font(30), fill=MUTED)
-draw.text((584, 520), "COLEGIO SAN MARCOS", font=font(18, bold=True), fill="#84938e")
+draw.text((584, 520), "GESTIÓN ESCOLAR", font=font(18, bold=True), fill="#84938e")
 og.save(PUBLIC / "og-image.png", "PNG", optimize=True)

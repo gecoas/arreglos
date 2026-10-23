@@ -9,6 +9,16 @@ CREATE TABLE IF NOT EXISTS arreglos.user_profiles (
   PRIMARY KEY (school_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS arreglos.school_branding (
+  school_id VARCHAR(64) PRIMARY KEY,
+  primary_color VARCHAR(7) NOT NULL DEFAULT '#811a1d',
+  secondary_color VARCHAR(7) NOT NULL DEFAULT '#a13232',
+  logo_data BYTEA,
+  logo_mime VARCHAR(32),
+  updated_by VARCHAR(128),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS arreglos.campuses (
   id VARCHAR(64) PRIMARY KEY,
   school_id VARCHAR(64) NOT NULL,
@@ -82,8 +92,15 @@ CREATE TABLE IF NOT EXISTS arreglos.notifications (
 CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON arreglos.notifications (school_id, user_id, created_at DESC) WHERE read_at IS NULL;
 
 INSERT INTO arreglos.campuses (id, school_id, name, sort_order) VALUES
-  ('alcaste', 'alcaste', 'Alcaste', 1), ('las-fuentes', 'alcaste', 'Las Fuentes', 2)
+  ('alcaste', 'alcaste', 'Alcaste', 1), ('las-fuentes', 'alcaste', 'Las Fuentes', 2),
+  ('erain-campus', 'erain', 'Erain', 1), ('eskibel-campus', 'erain', 'Eskibel', 2),
+  ('ayalde-campus', 'ayalde', 'Ayalde', 1), ('munabe-campus', 'ayalde', 'Munabe', 2)
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO arreglos.places (school_id,campus_id,name,sort_order)
+VALUES ('erain','erain-campus','Espacio por definir',1),('erain','eskibel-campus','Espacio por definir',1),
+       ('ayalde','ayalde-campus','Espacio por definir',1),('ayalde','munabe-campus','Espacio por definir',1)
+ON CONFLICT (school_id,campus_id,name) DO NOTHING;
 
 INSERT INTO arreglos.places (school_id, campus_id, name, sort_order)
 SELECT 'alcaste', campus.id, course.name || ' ' || section.name, (course.position * 2) + section.position

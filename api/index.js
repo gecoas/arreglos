@@ -13,7 +13,7 @@ const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
 const pushConfigured = Boolean(vapidSubject && vapidPublicKey && vapidPrivateKey);
 if (pushConfigured) webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '5mb' }));
 
 async function init() {
   const sourceUrl = new URL(process.env.INTRANET_DATABASE_URL || process.env.DATABASE_URL);
@@ -75,6 +75,7 @@ async function session(req, res, next) {
     const payload = await response.json();
     req.user = payload.user;
     req.schoolId = payload.user.school_id || payload.user.schoolId || 'alcaste';
+    req.authorizedSchools = payload.schools || [];
     const profile = await pool.query('SELECT profile FROM arreglos.user_profiles WHERE school_id = $1 AND user_id = $2 AND active = TRUE', [req.schoolId, req.user.id]);
     req.repairProfile = req.user.role === 'admin' ? 'gestor' : (profile.rows[0]?.profile || 'profesor');
     next();
@@ -87,6 +88,42 @@ app.use('/api', session);
 
 const canManage = req => ['gestor', 'direccion'].includes(req.repairProfile);
 app.get('/api/profile', (req, res) => res.json({ profile: req.repairProfile }));
+app.get('/api/branding', async (req, res) => {
+  const result = await pool.query(`SELECT primary_color,secondary_color,logo_mime,
+      CASE WHEN logo_data IS NULL THEN NULL ELSE 'data:' || logo_mime || ';base64,' || replace(encode(logo_data,'base64'),E'\\n','') END AS logo_data_url
+    FROM arreglos.school_branding WHERE school_id=$1`, [req.schoolId]);
+  const school = req.authorizedSchools.find(item => item.id === req.schoolId);
+  res.json({ school_id: req.schoolId, school_name: school?.name || req.schoolId,
+    primary_color: result.rows[0]?.primary_color || '#811a1d', secondary_color: result.rows[0]?.secondary_color || '#a13232',
+    logo_data_url: result.rows[0]?.logo_data_url || null });
+});
+app.put('/api/branding', async (req, res) => {
+  if (!canManage(req)) return res.status(403).json({ error: 'Solo los gestores pueden cambiar la imagen del colegio' });
+  const primaryColor = String(req.body?.primary_color || '').trim();
+  const secondaryColor = String(req.body?.secondary_color || '').trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(primaryColor) || !/^#[0-9a-fA-F]{6}$/.test(secondaryColor)) return res.status(400).json({ error: 'Elige dos colores HEX válidos' });
+  let logoData = null, logoMime = null, changeLogo = false;
+  if (req.body?.remove_logo === true) changeLogo = true;
+  else if (typeof req.body?.logo_data_url === 'string' && req.body.logo_data_url) {
+    const match = req.body.logo_data_url.match(/^data:(image\/(?:png|jpeg|webp));base64,([a-z0-9+/=]+)$/i);
+    if (!match) return res.status(400).json({ error: 'El logo debe ser PNG, JPEG o WebP válido' });
+    logoData = Buffer.from(match[2], 'base64');
+    if (!logoData.length || logoData.length > 3 * 1024 * 1024) return res.status(400).json({ error: 'El logo no puede superar los 3 MB' });
+    logoMime = match[1].toLowerCase();
+    changeLogo = true;
+  }
+  await pool.query(`INSERT INTO arreglos.school_branding AS current_brand (school_id,primary_color,secondary_color,logo_data,logo_mime,updated_by,updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)
+    ON CONFLICT (school_id) DO UPDATE SET primary_color=EXCLUDED.primary_color,secondary_color=EXCLUDED.secondary_color,
+      logo_data=CASE WHEN $7::boolean THEN EXCLUDED.logo_data ELSE current_brand.logo_data END,
+      logo_mime=CASE WHEN $7::boolean THEN EXCLUDED.logo_mime ELSE current_brand.logo_mime END,
+      updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP`,
+    [req.schoolId, primaryColor, secondaryColor, logoData, logoMime, req.user.id, changeLogo]);
+  const saved = await pool.query(`SELECT primary_color,secondary_color,logo_mime,
+      CASE WHEN logo_data IS NULL THEN NULL ELSE 'data:' || logo_mime || ';base64,' || replace(encode(logo_data,'base64'),E'\\n','') END AS logo_data_url
+    FROM arreglos.school_branding WHERE school_id=$1`, [req.schoolId]);
+  res.json({ school_id: req.schoolId, primary_color: saved.rows[0].primary_color, secondary_color: saved.rows[0].secondary_color, logo_data_url: saved.rows[0].logo_data_url });
+});
 app.get('/api/notifications/push/vapid-public-key', (_req, res) => pushConfigured ? res.json({ publicKey: vapidPublicKey }) : res.status(503).json({ error: 'Las notificaciones push no están configuradas' }));
 app.post('/api/notifications/push/subscriptions', async (req, res) => {
   if (!pushConfigured) return res.status(503).json({ error: 'Las notificaciones push no están configuradas' });
