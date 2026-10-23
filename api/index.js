@@ -136,7 +136,6 @@ async function dispatchNotification(req, { userIds = [], profiles = [], subject,
       const result = await pool.query('SELECT user_id FROM arreglos.user_profiles WHERE school_id=$1 AND active=TRUE AND profile=ANY($2::varchar[])', [req.schoolId, profiles]);
       result.rows.forEach(row => recipients.add(String(row.user_id)));
     }
-    recipients.delete(String(req.user.id));
     const recipientUsers = users.filter(user => recipients.has(String(user.id)));
     const recipientIds = [...new Set(recipientUsers.map(user => String(user.id)))];
     const emails = [...new Set(recipientUsers.map(user => user.email).filter(Boolean))];
