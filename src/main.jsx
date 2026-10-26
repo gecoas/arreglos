@@ -26,12 +26,17 @@ function normalizeRepair(item) {
   return { ...item, id: String(item.id), place: item.place_name || item.place, date: created.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }), author: item.author_name, assignee: item.assignee_name || null, assigneeId: item.assignee_id || '', updated: updated.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }), comments: Number(item.comment_count || 0) };
 }
 
+function formatSchoolDate() {
+  return new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Madrid' }).format(new Date()).toLocaleUpperCase('es-ES');
+}
+
 function IconButton({ children, label, onClick, className = '' }) { return <button type="button" className={`icon-button ${className}`} aria-label={label} title={label} onClick={onClick}>{children}</button>; }
 function StatusPill({ status }) { const meta = statusMeta[status]; return <span className={`status-pill ${meta.cls}`}><span className="status-dot" />{meta.label}</span>; }
 function Urgency({ value }) { return <span className={`urgency ${urgencyMeta[value]}`}><span />{value}</span>; }
 
 function App() {
   const [repairs, setRepairs] = useState([]);
+  const [todayDate, setTodayDate] = useState(formatSchoolDate);
   const [selectedId, setSelectedId] = useState(null);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -105,6 +110,11 @@ function App() {
     document.title = branding.school_name ? `Arreglos · ${branding.school_name}` : 'Arreglos · Gestión escolar';
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', branding.primary_color || '#811a1d');
   }, [branding.primary_color, branding.secondary_color]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTodayDate(formatSchoolDate()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!user?.id) return undefined;
@@ -181,7 +191,7 @@ function App() {
     <main className="main-content">
        <header className="topbar"><div className="mobile-brand"><IconButton label="Abrir menú" onClick={() => setMobileSidebarOpen(true)}><Menu size={21} /></IconButton>{branding.logo_data_url ? <img className="mobile-school-logo" src={branding.logo_data_url} alt={`Logo de ${branding.school_name}`} /> : <span className="mobile-school-logo fallback"><Hammer size={15} /></span>}<span>arreglos</span></div><IconButton label={sidebarCollapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'} className="sidebar-toggle" onClick={toggleSidebar}>{sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</IconButton><div className="breadcrumb"><span>{branding.school_name || 'Centro escolar'}</span><ChevronRight size={14} /><strong>Fichas de arreglos</strong></div><div className="top-actions"><div className="role-select"><UserRound size={15} /><span>{role}</span></div><button type="button" className={`icon-button notification ${notificationsOpen ? 'is-open' : ''}`} onClick={() => { setNotificationsOpen(open => !open); setAccountOpen(false); }} aria-label={`Notificaciones${unreadNotifications ? `, ${unreadNotifications} sin leer` : ''}`} aria-expanded={notificationsOpen}><Bell size={19} />{unreadNotifications > 0 && <i />}</button><button type="button" className="avatar avatar-green top-avatar account-trigger" onClick={() => { setAccountOpen(open => !open); setNotificationsOpen(false); }} aria-label="Abrir menú de cuenta">{user.initials || user.name?.slice(0, 2).toUpperCase()}</button></div></header>{notificationsOpen && <NotificationsMenu items={notifications} unreadCount={unreadNotifications} onOpen={openNotification} onReadAll={markAllNotificationsRead} onClose={() => setNotificationsOpen(false)} />}{accountOpen && <AccountMenu user={user} role={role} schools={schools} currentSchoolId={user.school_id} onSwitchSchool={switchSchool} onLogout={logout} />}
        <div className={`page-wrap ${activeView}`}>
-        <div className="page-heading"><div><div className="eyebrow">MIÉRCOLES, 23 DE OCTUBRE DE 2024</div><h1>Fichas de arreglos</h1><p>Organiza, asigna y haz seguimiento de los arreglos del centro.</p></div><button className="primary-button" onClick={() => setShowNew(true)}><Plus size={18} />Nueva ficha</button></div>
+         <div className="page-heading"><div><div className="eyebrow">{todayDate}</div><h1>Fichas de arreglos</h1><p>Organiza, asigna y haz seguimiento de los arreglos del centro.</p></div><button className="primary-button" onClick={() => setShowNew(true)}><Plus size={18} />Nueva ficha</button></div>
          <section className="stats-grid"><div className="stat-card"><div className="stat-icon all"><FilePlus2 size={19} /></div><div><span>Total de fichas</span><strong>{repairs.length}</strong><small>+2 esta semana</small></div></div><div className="stat-card"><div className="stat-icon orange"><Clock3 size={19} /></div><div><span>Por atender</span><strong>{count('Recibida') + count('Asignada')}</strong><small>Requieren atención</small></div></div><div className="stat-card"><div className="stat-icon blue"><Hammer size={19} /></div><div><span>En progreso</span><strong>{count('En progreso')}</strong><small>En manos del equipo</small></div></div><div className="stat-card"><div className="stat-icon green"><Check size={19} /></div><div><span>Realizadas</span><strong>{count('Realizada')}</strong><small>Este mes</small></div></div></section>
          {activeView === 'team' && <TeamView assignees={assignees} onProfile={updateProfile} canManage={user.role === 'admin' || ['gestor', 'direccion'].includes(user.repair_profile)} />}
            {activeView === 'spaces' && <SpacesView repairs={repairs} campuses={campuses} canManage={user.role === 'admin' || ['gestor', 'direccion'].includes(user.repair_profile)} onAdd={addPlace} onRename={renamePlace} onDelete={deletePlace} />}
