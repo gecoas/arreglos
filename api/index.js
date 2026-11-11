@@ -156,6 +156,27 @@ app.patch('/api/notifications/:id/read', async (req, res) => {
   res.status(204).end();
 });
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
+function parseRepairPhoto(dataUrl) {
+  if (dataUrl == null || dataUrl === '') return { data: null, mime: null };
+  if (typeof dataUrl !== 'string') throw new Error('La foto no tiene un formato válido');
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([a-z0-9+/=]+)$/i);
+  if (!match) throw new Error('La foto debe ser PNG, JPEG o WebP');
+  const data = Buffer.from(match[2], 'base64');
+  if (!data.length || data.length > 3 * 1024 * 1024) throw new Error('La foto no puede superar los 3 MB');
+  const mime = match[1].toLowerCase();
+  const valid = mime === 'image/png' ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : mime === 'image/jpeg' ? data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff
+      : data.subarray(0, 4).toString() === 'RIFF' && data.subarray(8, 12).toString() === 'WEBP';
+  if (!valid) throw new Error('El archivo no coincide con el formato de imagen seleccionado');
+  return { data, mime };
+}
+function repairResponse(repair, includePhoto = true) {
+  if (!repair) return repair;
+  const response = { ...repair, has_photo: Boolean(repair.photo_data), photo_data_url: includePhoto && repair.photo_data ? `data:${repair.photo_mime};base64,${repair.photo_data.toString('base64')}` : null };
+  delete response.photo_data;
+  delete response.photo_mime;
+  return response;
+}
 async function directory(req) {
   const response = await fetch(`${intranetUrl}/api/directory/users`, { headers: { cookie: req.headers.cookie || '' } });
   if (!response.ok) throw new Error(`Directory request failed (${response.status})`);
@@ -212,6 +233,7 @@ async function loadRepair(id, req) {
   const names = await userNames(req);
   repair.author_name = names.get(String(repair.author_id))?.name || req.user.name;
   repair.assignee_name = names.get(String(repair.assignee_id))?.name || null;
+  repair.photo_data_url = repair.photo_data ? `data:${repair.photo_mime};base64,${repair.photo_data.toString('base64')}` : null;
   return repair;
 }
 
@@ -225,7 +247,7 @@ app.get('/api/repairs', async (req, res) => {
         WHERE r.school_id = $1 AND ($2::boolean OR r.author_id = $3 OR r.assignee_id = $3)
         ORDER BY r.updated_at DESC`, [req.schoolId, canManage(req), req.user.id]);
     const names = await userNames(req);
-    res.json({ repairs: result.rows.map(item => ({ ...item, author_name: names.get(String(item.author_id))?.name || '', assignee_name: names.get(String(item.assignee_id))?.name || null })) });
+    res.json({ repairs: result.rows.map(item => repairResponse({ ...item, author_name: names.get(String(item.author_id))?.name || '', assignee_name: names.get(String(item.assignee_id))?.name || null }, false)) });
   } catch (error) { console.error(error); res.status(500).json({ error: 'No se pudieron cargar las fichas' }); }
 });
 
@@ -308,13 +330,21 @@ app.post('/api/repairs', async (req, res) => {
   const urgency = ['Urgente', 'Alta', 'Media', 'Baja'].includes(req.body?.urgency) ? req.body.urgency : 'Media';
   const place = await pool.query('SELECT name FROM arreglos.places WHERE id = $1 AND campus_id = $2 AND school_id = $3 AND active = TRUE', [placeId, campusId, req.schoolId]);
   if (!title || !place.rows.length) return res.status(400).json({ error: 'Indica título, sede y aula válidos' });
+  let photo;
+  try { photo = parseRepairPhoto(req.body?.photo_data_url); } catch (error) { return res.status(400).json({ error: error.message }); }
   const result = await pool.query(
-    `INSERT INTO arreglos.repairs (school_id, title, description, campus_id, place_id, urgency, author_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [req.schoolId, title, description, campusId, placeId, urgency, req.user.id]);
+    `INSERT INTO arreglos.repairs (school_id,title,description,campus_id,place_id,urgency,author_id,photo_data,photo_mime)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [req.schoolId,title,description,campusId,placeId,urgency,req.user.id,photo.data,photo.mime]);
   const repair = await loadRepair(result.rows[0].id, req);
   await dispatchNotification(req, { profiles: ['gestor'], subject: 'Nueva ficha de arreglo', body: `${repair.title} · ${repair.campus_name} · ${repair.place_name}`, repairId: repair.id });
-  res.status(201).json({ repair });
+  res.status(201).json({ repair: repairResponse(repair) });
+});
+
+app.get('/api/repairs/:id', async (req, res) => {
+  const repair = await loadRepair(req.params.id, req);
+  if (!repair) return res.status(404).json({ error: 'Ficha no encontrada' });
+  res.json({ repair: repairResponse(repair) });
 });
 
 app.patch('/api/repairs/:id', async (req, res) => {
@@ -324,7 +354,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
   if (!manager && !author && !assignee) return res.status(403).json({ error: 'No tienes permiso para editar esta ficha' });
   if (req.body?.status !== undefined && req.body.status !== current.status && !manager && !assignee) return res.status(403).json({ error: 'Solo los gestores o la persona asignada pueden cambiar el progreso' });
   const canEditDetails = manager || author;
-  if (!canEditDetails && ['title', 'description', 'campus_id', 'place_id', 'urgency'].some(key => key in (req.body || {}))) return res.status(403).json({ error: 'Solo puedes editar los detalles antes de asignar la ficha' });
+  if (!canEditDetails && ['title', 'description', 'campus_id', 'place_id', 'urgency', 'photo_data_url'].some(key => key in (req.body || {}))) return res.status(403).json({ error: 'Solo puedes editar los detalles antes de asignar la ficha' });
   const campusId = req.body?.campus_id || current.campus_id, placeId = Number(req.body?.place_id || current.place_id);
   const place = await pool.query('SELECT name FROM arreglos.places WHERE id = $1 AND campus_id = $2 AND school_id = $3 AND active = TRUE', [placeId, campusId, req.schoolId]);
   if (!place.rows.length) return res.status(400).json({ error: 'Sede o aula no válida' });
@@ -342,11 +372,16 @@ app.patch('/api/repairs/:id', async (req, res) => {
   const allowed = ['Recibida', 'Asignada', 'En progreso', 'Realizada'];
   const status = allowed.includes(req.body?.status) ? req.body.status : current.status;
   const finalStatus = assigneeId && status === 'Recibida' ? 'Asignada' : status;
+  let photoData = current.photo_data, photoMime = current.photo_mime;
+  if (canEditDetails && 'photo_data_url' in (req.body || {})) {
+    try { const photo = parseRepairPhoto(req.body.photo_data_url); photoData = photo.data; photoMime = photo.mime; }
+    catch (error) { return res.status(400).json({ error: error.message }); }
+  }
   await pool.query(
-    `UPDATE arreglos.repairs SET title=$1, description=$2, campus_id=$3, place_id=$4, urgency=$5, status=$6, assignee_id=$7, assigned_by_id=$8, updated_at=CURRENT_TIMESTAMP,
-      completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$9 AND school_id=$10`,
+    `UPDATE arreglos.repairs SET title=$1,description=$2,campus_id=$3,place_id=$4,urgency=$5,status=$6,assignee_id=$7,assigned_by_id=$8,photo_data=$9,photo_mime=$10,updated_at=CURRENT_TIMESTAMP,
+      completed_at=CASE WHEN $6::varchar='Realizada' THEN COALESCE(completed_at,CURRENT_TIMESTAMP) ELSE NULL END WHERE id=$11 AND school_id=$12`,
     [canEditDetails ? text(req.body?.title ?? current.title,255) : current.title, canEditDetails ? text(req.body?.description ?? current.description,5000) : current.description, campusId, placeId,
-      canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, assignedById, req.params.id, req.schoolId]);
+      canEditDetails && ['Urgente','Alta','Media','Baja'].includes(req.body?.urgency) ? req.body.urgency : current.urgency, finalStatus, assigneeId, assignedById, photoData, photoMime, req.params.id, req.schoolId]);
   const updated = await loadRepair(req.params.id, req);
   if (assigneeId && String(assigneeId) !== String(current.assignee_id)) {
     await dispatchNotification(req, { userIds: [assigneeId], subject: 'Te han asignado un arreglo', body: `${updated.title} · ${updated.campus_name} · ${updated.place_name}`, repairId: updated.id });
@@ -354,7 +389,7 @@ app.patch('/api/repairs/:id', async (req, res) => {
   if (finalStatus === 'Realizada' && current.status !== 'Realizada') {
     await dispatchNotification(req, { userIds: [current.assignee_id, current.assigned_by_id].filter(Boolean), profiles: current.assigned_by_id ? [] : ['gestor'], subject: 'Ficha de arreglo realizada', body: `${updated.title} se ha marcado como realizada.`, repairId: updated.id });
   }
-  res.json({ repair: updated });
+  res.json({ repair: repairResponse(updated) });
 });
 
 app.delete('/api/repairs/:id', async (req, res) => {

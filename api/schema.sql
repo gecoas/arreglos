@@ -49,11 +49,15 @@ CREATE TABLE IF NOT EXISTS arreglos.repairs (
   author_id VARCHAR(128) NOT NULL,
   assignee_id VARCHAR(128),
   assigned_by_id VARCHAR(128),
+  photo_data BYTEA,
+  photo_mime VARCHAR(32),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TIMESTAMPTZ
 );
 ALTER TABLE arreglos.repairs ADD COLUMN IF NOT EXISTS assigned_by_id VARCHAR(128);
+ALTER TABLE arreglos.repairs ADD COLUMN IF NOT EXISTS photo_data BYTEA;
+ALTER TABLE arreglos.repairs ADD COLUMN IF NOT EXISTS photo_mime VARCHAR(32);
 CREATE INDEX IF NOT EXISTS repairs_school_status_idx ON arreglos.repairs (school_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS repairs_author_idx ON arreglos.repairs (author_id, created_at DESC);
 
